@@ -22,7 +22,7 @@ let syt = 'https://youtube.com'
 
 global.docs = ['doc1', 'doc2', 'doc3']
 global.nomorown = '573187418668@s.whatsapp.net'
-global.logo = 'https://raw.githubusercontent.com/WillZek/Storage-CB2/main/images/54dfe27a73cf.jpg'
+// global.logo = 'https://raw.githubusercontent.com/WillZek/Storage-CB2/main/images/54dfe27a73cf.jpg'
 global.iconorcanal = 'https://raw.githubusercontent.com/WillZek/Storage-CB2/main/images/54dfe27a73cf.jpg'
 global.metanombre = 'Meta AI'
 
