@@ -135,7 +135,7 @@ let handler = async (m, { conn, usedPrefix, command, args }) => {
 
 handler.help = ['fb', 'fbaudio']
 handler.tags = ['downloader']
-handler.command = ['fb', 'facebook', 'fbd', 'fbdl', 'fbaudio', 'facebookaudio']
+handler.command = ['fb','fbaudio']
 handler.register = false
 
 export default handler
