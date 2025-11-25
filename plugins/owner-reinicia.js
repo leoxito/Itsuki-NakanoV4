@@ -88,18 +88,21 @@ let handler = async (m, { conn, usedPrefix, command, isOwner, isROwner }) => {
   try {
     await conn.reply(
       m.chat,
-      `> 🎄 *¡ACTUALIZACIÓN COMPLETADA!* 🎅
+      `> 🎄 *¡BOT EN LÍNEA!* 🎅
 
-> ✅ *Procesos finalizados:*
-${logs.join('\n\n')}
+> ✅ *Itsuki Nakano V3 reconectado exitosamente*
 
-> 🎁 *Itsuki V3 se reiniciará en:*
-> \`\`\`3 segundos...\`\`\`
+> 🌐 *Estado del servidor:* Conectado
+> ⚡ *Servicios:* Activos
+> 🎯 *Funciones:* Operativas
+> ⚙️ ${logs.join('\n\n')}
+> 📊 *Información del sistema:*
+> 🕑 Tiempo de reconexión: ${Date.now() - info.timestamp}ms
+> 🔰 Estado: ✅ Conectado al servidor
+> 💾 Servicios: 🟢 Todos operativos
 
-> 🔄 *Reconectando al servidor...*
-> 🌐 *Iniciando servicios...*
-
-> 🎅 *¡Itsuki Nakano V3 volverá en línea pronto!* 🎄`.slice(0, 3500),
+> 🎅 *¡Itsuki V3 está listo para ayudarte de nuevo!*
+> 🎄 *¡Feliz Navidad!* 🎁`,`.slice(0, 3500),
       m
     )
   } catch {}
