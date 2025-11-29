@@ -76,22 +76,8 @@ let handler = async (m, { conn, usedPrefix: _p }) => {
       {
         name: 'cta_url',
         buttonParamsJson: JSON.stringify({ 
-          display_text: '🌨️ ᴄᴏᴍᴜɴɪᴅᴀᴅ ᴏғɪᴄɪᴀʟ', 
-          url: 'https://chat.whatsapp.com/BXxWuamOOE4K9eKC623FIO' 
-        })
-      },
-      {
-        name: 'cta_url',
-        buttonParamsJson: JSON.stringify({ 
           display_text: '💻 ʜᴏsᴛɪɴɢ-ᴏғɪᴄɪᴀʟ', 
           url: 'https://dash.quintillisas.com' 
-        })
-      },
-      {
-        name: 'cta_url',
-        buttonParamsJson: JSON.stringify({ 
-          display_text: '📲 ᴡᴇʙ ᴏғɪᴄɪᴀʟ-ʙᴏᴛ', 
-          url: 'https://web.quintillisas.com' 
         })
       }
     ]
@@ -117,7 +103,11 @@ let handler = async (m, { conn, usedPrefix: _p }) => {
       })
     })
 
-    const msg = generateWAMessageFromContent(m.chat, { interactiveMessage }, { userJid: conn.user.jid, quoted: m })
+    const fkontak = await makeFkontak()
+    const msg = generateWAMessageFromContent(m.chat, { interactiveMessage }, { 
+      userJid: conn.user.jid, 
+      quoted: fkontak 
+    })
     await conn.relayMessage(m.chat, msg.message, { messageId: msg.key.id })
 
   } catch (e) {
@@ -125,6 +115,21 @@ let handler = async (m, { conn, usedPrefix: _p }) => {
     await conn.sendMessage(m.chat, {
       text: `🍙 *ITSUNI MENÚ BÁSICO*\n\n• ${_p}menu - Menú principal\n• ${_p}ping - Estado del bot\n• ${_p}prefijos - Ver prefijos\n\n⚠️ *Error:* ${e.message}`
     }, { quoted: m })
+  }
+}
+
+// Quoted especial con mini-thumbnail
+async function makeFkontak() {
+  try {
+    const res = await fetch('https://cdn.russellxz.click/64bba973.jpg')
+    const thumb2 = Buffer.from(await res.arrayBuffer())
+    return {
+      key: { participants: '0@s.whatsapp.net', remoteJid: 'status@broadcast', fromMe: false, id: 'Halo' },
+      message: { locationMessage: { name: 'ItsukiV3', jpegThumbnail: thumb2 } },
+      participant: '0@s.whatsapp.net'
+    }
+  } catch {
+    return undefined
   }
 }
 
