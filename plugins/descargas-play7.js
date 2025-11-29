@@ -24,18 +24,19 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }, { quoted: m })
 
     if (command === 'play11') {
-      // Descargar video
+      // Descargar video - CORREGIDO: usar buffer
       try {
         const result = await fetch(`https://fgsi.dpdns.org/api/downloader/youtube/v2?apikey=fgsiapi-335898e9-6d&url=${video.url}&type=mp4`).then(r => r.json())
         if (!result?.data?.url) throw new Error('API sin resultado válido')
 
+        // Descargar el video como buffer
+        const videoBuffer = await fetch(result.data.url).then(res => res.buffer())
+        
         await conn.sendMessage(m.chat, {
-          video: { 
-            url: result.data.url,
-            caption: `> ⓘ \`Video:\` *${video.title}*`,
-            fileName: `${video.title}.mp4`,
-            mimetype: 'video/mp4'
-          }
+          video: videoBuffer,
+          caption: `> ⓘ \`Video:\` *${video.title}*`,
+          fileName: `${video.title}.mp4`,
+          mimetype: 'video/mp4'
         }, { quoted: m })
 
         await m.react('✅')
@@ -45,13 +46,14 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         try {
           const altResult = await fetch(`https://api.nekolabs.fun/api/ytdl?url=${video.url}`).then(r => r.json())
           if (altResult?.videoUrl) {
+            // Descargar como buffer
+            const videoBuffer = await fetch(altResult.videoUrl).then(res => res.buffer())
+            
             await conn.sendMessage(m.chat, {
-              video: { 
-                url: altResult.videoUrl,
-                caption: `> ⓘ \`Video:\` *${video.title}*`,
-                fileName: `${video.title}.mp4`,
-                mimetype: 'video/mp4'
-              }
+              video: videoBuffer,
+              caption: `> ⓘ \`Video:\` *${video.title}*`,
+              fileName: `${video.title}.mp4`,
+              mimetype: 'video/mp4'
             }, { quoted: m })
             await m.react('✅')
           } else {
@@ -63,7 +65,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       }
 
     } else {
-      // Descargar audio
+      // Descargar audio - CORREGIDO: usar buffer
       try {
         const apiURL = `https://api.nekolabs.web.id/downloader/youtube/v1?url=${video.url}&format=mp3`
         const result = await fetch(apiURL).then(r => r.json())
@@ -78,13 +80,14 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
           audioUrl = fallback.data.url
         }
 
+        // Descargar audio como buffer
+        const audioBuffer = await fetch(audioUrl).then(res => res.buffer())
+
         await conn.sendMessage(m.chat, {
-          audio: { 
-            url: audioUrl,
-            mimetype: 'audio/mpeg',
-            fileName: `${video.title}.mp3`,
-            ptt: false
-          }
+          audio: audioBuffer,
+          mimetype: 'audio/mpeg',
+          fileName: `${video.title}.mp3`,
+          ptt: false
         }, { quoted: m })
 
         await m.react('✅')
