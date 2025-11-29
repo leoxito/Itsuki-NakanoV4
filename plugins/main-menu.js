@@ -53,9 +53,9 @@ let handler = async (m, { conn, usedPrefix: _p }) => {
         menuText += `> ꒰⌢ ʚ˚₊‧ ✐ ꒱ » \`${catName}\` «\n`
         let uniqueCommands = [...new Set(comandos.flatMap(menu => menu.help))]
         for (let cmd of uniqueCommands) {
-          menuText += `> ੭੭ ﹙✰﹚ ❄︎ \`\`\`${_p}${cmd}\`\`\`\n`
+          menuText += `> ⤷ ﹙✰﹚ ❄︎ \`\`\`${_p}${cmd}\`\`\`\n`
         }
-        menuText += `> .・。.・゜✭・.・✫・゜・。.\n\n`
+        menuText += `> ︶꒦︶꒷︶︶꒷꒦︶︶︶꒷꒦‧ ₊˚・\n\n`
       }
     }
 
