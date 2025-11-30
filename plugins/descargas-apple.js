@@ -236,6 +236,7 @@ function pickMimetype(fileName) {
   return 'application/octet-stream'
 }
 
+// Quoted especial con mini-thumbnail
 async function makeFkontak() {
   try {
     const res = await fetch('https://i.postimg.cc/W3RsYXJ5/applemusic-(1)-(1)-(1)-(1).png')
@@ -257,18 +258,30 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
   if (!options.appleUrl && Number.isInteger(numericSelection) && numericSelection > 0) {
     const { chatId, messageId } = extractQuotedMeta(m)
     if (!chatId || !messageId) {
-      return
+      return conn.reply(
+        m.chat,
+        `Responde al mensaje de resultados de ${usedPrefix}applesearch con *${usedPrefix}${command} ${numericSelection}* para elegir esa pista.`,
+        quotedContact || m
+      )
     }
     const picked = pickAppleResult(chatId, messageId, numericSelection)
     if (!picked?.appleUrl) {
-      return
+      return conn.reply(
+        m.chat,
+        'Ese número no está disponible o expiró. Ejecuta de nuevo *applesearch* para actualizar la lista.',
+        quotedContact || m
+      )
     }
     options.appleUrl = picked.appleUrl
     options.songName = picked.title || 'Unknown'
     options.artistName = picked.artist || 'Unknown'
   }
   if (!options.appleUrl) {
-    return
+    return conn.reply(
+      m.chat,
+      `Uso: ${usedPrefix}${command} --url <link_apple_music> [--song <nombre>] [--artist <artista>] [--quality m4a|mp3] [--skip-download]\nEjemplo: ${usedPrefix}${command} --url https://music.apple.com/... --quality mp3\n\nTambién puedes buscar con ${usedPrefix}applesearch y responder a ese mensaje con ${usedPrefix}${command} <número> para descargar.`,
+      quotedContact || m
+    )
   }
   await m.react?.('⏳')
   try {
@@ -283,6 +296,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
     await warmUpSession()
     const downloadLink = await requestDownloadLink(params)
     if (options.skipDownload) {
+      await conn.reply(m.chat, `URL directa:\n${downloadLink}`, quotedContact || m)
       await m.react?.('✅')
       return true
     }
@@ -290,6 +304,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
     const fileBuffer = await fsp.readFile(savedTo)
     const mimetype = pickMimetype(savedTo)
     const isAudio = mimetype.startsWith('audio/')
+    const caption = `Apple Music Downloader\n• Canción: ${params.songName}\n• Artista: ${params.artistName}\n• Calidad: ${params.quality}`
 
     if (isAudio) {
       await conn.sendMessage(
@@ -300,7 +315,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
     } else {
       await conn.sendMessage(
         m.chat,
-        { document: fileBuffer, mimetype, fileName: path.basename(savedTo) },
+        { document: fileBuffer, mimetype, fileName: path.basename(savedTo), caption },
         { quoted: quotedContact || m }
       )
     }
@@ -310,12 +325,13 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
     return true
   } catch (error) {
     await m.react?.('❌')
-    return
+    const message = error?.message || 'Error desconocido'
+    return conn.reply(m.chat, `Apple Music scrape falló: ${message}`, quotedContact || m)
   }
 }
 
-handler.help = ['applemusic']
-handler.tags = ['dl']
-handler.command = /^(applemusic)$/i
+/*handler.help = ['applemusic', 'appledl']
+handler.tags = ['dl']*/
+handler.command = /^(applemusic|appledl|appletrack)$/i
 
 export default handler
