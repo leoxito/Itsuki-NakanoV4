@@ -5,27 +5,34 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     if (!text) {
         await m.react('❓')
         return conn.reply(m.chat,
-            `> \`🎯 REACCIONAR CANAL\` 🍙\n\n` +
-            `> \`📝 Uso: ${usedPrefix}${command} reacción(es)\`\n\n` +
-            `> \`💡 Ejemplo: ${usedPrefix}${command} 👍 ❤️\`\n\n` +
-            `> \`🎭 Reacciones permitidas: Cualquier emoji\`\n\n` +
-            `> \`📚 "Reacciona a la última publicación del canal"\` ✨`,
-            m
-        )
+`> 🎯 *REACCIONAR CANAL* 🍙
+
+> 📝 *Uso:* ${usedPrefix}${command} <link_del_post> <emoji(s)>
+> 💡 *Ejemplo:* ${usedPrefix}${command} https://whatsapp.com/channel/ID/POSTID 😂🔥
+
+> 📚 *Reacciona a una publicación específica del canal* ✨`,
+        m)
     }
 
-    const reactEmojis = text.split(' ').join(',') // ← convierte "😂 🔥 😍" en "😂,🔥,😍"
+    const args = text.trim().split(/ +/)
+    const link = args.shift()
+    const reacts = args.join(',')
+
+    if (!link.includes('whatsapp.com/channel/')) {
+        await m.react('⚠️')
+        return conn.reply(m.chat,
+`> ❌ *LINK NO VÁLIDO*  
+> Debes pegar el link completo del post del canal.`,
+        m)
+    }
 
     try {
         await m.react('⏳')
 
-        // URL del canal actual
-        const canalUrl = `https://wa.me/${m.chat}`
-
         const apiUrl =
             `https://api-adonix.ultraplus.click/tools/react?apikey=${global.apikey
-            }&post_link=${encodeURIComponent(canalUrl)
-            }&reacts=${encodeURIComponent(reactEmojis)}`
+            }&post_link=${encodeURIComponent(link)
+            }&reacts=${encodeURIComponent(reacts)}`
 
         const res = await fetch(apiUrl)
         const data = await res.json()
@@ -33,30 +40,27 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         if (data.status) {
             await m.react('✅')
             conn.reply(m.chat,
-                `> \`✅ REACCIÓN ENVIADA\` 🍙\n\n` +
-                `> \`🎭 Reacciones:\` ${reactEmojis.replace(/,/g, ' ')}\n` +
-                `> \`📄 Publicación:\` Último post\n\n` +
-                `> \`📚 "¡Reacciones aplicadas correctamente!"\` ✨`,
-                m
-            )
+`> ✅ *REACCIONES ENVIADAS* 🍙
+
+> 📢 *Post:* ${link}
+> 🎭 *Reacciones:* ${reacts}
+
+> ✨ *¡Listo!*`,
+            m)
         } else {
             await m.react('❌')
             conn.reply(m.chat,
-                `> \`❌ ERROR\` 🍙\n\n` +
-                `> \`📚 No se pudo reaccionar al canal\`\n\n` +
-                `> \`🍙 "Intenta con otras reacciones"\` ✨`,
-                m
-            )
+`> ❌ *ERROR*  
+> La API no pudo reaccionar al post.`,
+            m)
         }
 
     } catch (e) {
         await m.react('❌')
         conn.reply(m.chat,
-            `> \`❌ ERROR\` 🍙\n\n` +
-            `> \`📚 ${e.message}\`\n\n` +
-            `> \`🍙 "Problema al conectar con el servicio"\` ✨`,
-            m
-        )
+`> ❌ *ERROR EN LA API*
+> ${e.message}`,
+        m)
     }
 }
 
