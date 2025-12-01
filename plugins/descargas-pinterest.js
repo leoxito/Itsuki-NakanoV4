@@ -34,10 +34,10 @@ let handler = async (m, { conn, text, args, usedPrefix }) => {
                         '> `✨ Resultados de tu búsqueda`'
             }, { quoted: m })
             
-            await m.react('✅️')
+            await m.react('✔️')
         }
     } catch (e) {
-        await m.react('❌️')
+        await m.react('✖️')
         await conn.reply(m.chat, '> `⚠️ ERROR ENCONTRADO`\n\n> `📝 Usa *' + usedPrefix + 'report* para informarlo.`\n\n' + e, m)
     }
 }
