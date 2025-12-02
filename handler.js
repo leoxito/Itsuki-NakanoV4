@@ -8,12 +8,11 @@ import fetch from "node-fetch"
 import ws from "ws"
 import { createCanvas, loadImage } from '@napi-rs/canvas'
 import { jidNormalizedUser } from '@whiskeysockets/baileys'
-import os from 'os' // Añadido para manejo de directorios temporales del sistema
+import os from 'os'
 
 // =============================================
 //  SISTEMA GLOBAL FILENAME SIMPLIFICADO
 // =============================================
-// Solo define si no existen, pero de forma más simple
 if (typeof global.__filename !== 'function') {
   global.__filename = function(url, relative = false) {
     try {
@@ -85,13 +84,10 @@ function loadWelcomeState() {
 function saveWelcomeState(state) {
   try {
     const tempDir = path.dirname(WELCOME_STATE_FILE)
-    // Asegurarse de que el directorio temp existe
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true })
-      console.log(`📁 Directorio temp creado: ${tempDir}`)
     }
     fs.writeFileSync(WELCOME_STATE_FILE, JSON.stringify(state, null, 2))
-    console.log(`💾 Estado guardado en: ${WELCOME_STATE_FILE}`)
   } catch (error) {
     console.error('Error saving welcome state:', error)
   }
@@ -108,7 +104,6 @@ export function setWelcomeState(jid, enabled) {
   const state = loadWelcomeState()
   state[jid] = enabled
   saveWelcomeState(state)
-  console.log(`⚙️ Welcome ${enabled ? 'activado' : 'desactivado'} para: ${jid}`)
   return enabled
 }
 
@@ -200,40 +195,28 @@ export async function makeCard({ title = 'Bienvenida', subtitle = '', avatarUrl 
 export async function sendWelcomeOrBye(conn, { jid, userName = 'Usuario', type = 'welcome', groupName = '', participant }) {
   // VERIFICAR SI EL WELCOME ESTÁ ACTIVADO PARA ESTE GRUPO
   if (!isWelcomeEnabled(jid)) {
-    console.log(`🎀 Welcome/Bye desactivado para el grupo: ${jid}`)
     return null
   }
 
   // CORRECCIÓN: Crear directorio temp de manera segura
   let tmpDir = path.join(process.cwd(), 'temp')
-  console.log(`📁 Directorio temporal: ${tmpDir}`)
   
   // Asegurarse de que el directorio temp existe
   if (!fs.existsSync(tmpDir)) {
     try {
       fs.mkdirSync(tmpDir, { recursive: true })
-      console.log(`✅ Directorio 'temp' creado exitosamente en: ${tmpDir}`)
     } catch (mkdirError) {
-      console.error(`❌ Error al crear directorio 'temp':`, mkdirError.message)
-      
       // Intentar con directorio alternativo
       tmpDir = path.join(os.tmpdir(), 'whatsapp-bot-temp')
-      console.log(`🔄 Intentando directorio alternativo: ${tmpDir}`)
-      
       try {
         if (!fs.existsSync(tmpDir)) {
           fs.mkdirSync(tmpDir, { recursive: true })
-          console.log(`✅ Directorio alternativo creado: ${tmpDir}`)
         }
       } catch (altError) {
-        console.error(`❌ Error al crear directorio alternativo:`, altError.message)
         // Usar directorio actual como última opción
         tmpDir = process.cwd()
-        console.log(`⚠️ Usando directorio actual: ${tmpDir}`)
       }
     }
-  } else {
-    console.log(`📂 Directorio 'temp' ya existe: ${tmpDir}`)
   }
 
   const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
@@ -307,7 +290,6 @@ export async function sendWelcomeOrBye(conn, { jid, userName = 'Usuario', type =
     const buff = await makeCard({ title, subtitle, avatarUrl, bgUrl, badgeUrl })
     const file = path.join(tmpDir, `${type}-${Date.now()}.png`)
     fs.writeFileSync(file, buff)
-    console.log(`🖼️ Imagen ${type} guardada en: ${file}`)
 
     const who = participant || ''
     let realJid = who
@@ -386,21 +368,14 @@ export async function sendWelcomeOrBye(conn, { jid, userName = 'Usuario', type =
       contextInfo: { mentionedJid: mentionId } 
     })
 
-    console.log(`✅ ${tipo} enviada para: ${taguser}`)
-
     // Limpiar archivo temporal después de enviar
     setTimeout(() => {
-      try { 
-        fs.unlinkSync(file)
-        console.log(`🗑️ Archivo temporal eliminado: ${file}`)
-      } catch (unlinkError) {
-        console.error(`❌ Error al eliminar archivo temporal:`, unlinkError.message)
-      }
+      try { fs.unlinkSync(file) } catch {}
     }, 60000)
 
     return file
   } catch (error) {
-    console.error(`❌ Error en sendWelcomeOrBye:`, error)
+    console.error(`Error en sendWelcomeOrBye:`, error)
     return null
   }
 }
@@ -951,6 +926,18 @@ global.dfail = (type, m, conn) => {
 
   if (msg) return conn.reply(m.chat, msg, m).then(_ => m.react('✖️'))
 }
+
+// =============================================
+// HACER FUNCIONES GLOBALES PARA PLUGINS
+// =============================================
+
+// Hacer funciones de bienvenida disponibles globalmente
+global.sendWelcomeOrBye = sendWelcomeOrBye
+global.isWelcomeEnabled = isWelcomeEnabled
+global.setWelcomeState = setWelcomeState
+global.makeCard = makeCard
+
+console.log('✅ Funciones de bienvenida disponibles globalmente')
 
 // USO FINAL DE GLOBAL.__FILENAME PARA WATCHFILE - CORREGIDO
 let file = global.__filename(import.meta.url, true)
