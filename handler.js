@@ -35,6 +35,11 @@ if (typeof global.__dirname !== 'function') {
 
 const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
+// === DEFINIR OWNER GLOBAL ===
+// Agrega esta línea para definir el owner
+global.owner = ['573187418668@s.whatsapp.net']; // Tu número en formato JID
+global.roowner = ['573187418668']; // Tu número para referencia
+
 const { proto } = (await import("@whiskeysockets/baileys")).default
 const isNumber = x => typeof x === "number" && !isNaN(x)
 const delay = ms => isNumber(ms) && new Promise(resolve => setTimeout(function () {
@@ -131,15 +136,15 @@ const paisesArabesCompletos = {
 
 function detectarNumeroArabe(numero) {
     if (!numero || typeof numero !== 'string') return { esArabe: false }
-    
+
     const numStr = numero.toString().replace(/\D/g, '')
-    
+
     if (numStr.length < 3) return { esArabe: false }
-    
+
     for (const [paisId, info] of Object.entries(paisesArabesCompletos)) {
         for (const codigo of info.codigos) {
             const codigoLimpio = codigo.replace('+', '').replace('00', '')
-            
+
             if (numStr.startsWith(codigoLimpio)) {
                 return {
                     esArabe: true,
@@ -151,7 +156,7 @@ function detectarNumeroArabe(numero) {
             }
         }
     }
-    
+
     return { esArabe: false }
 }
 
@@ -519,7 +524,7 @@ export async function sendWelcomeOrBye(conn, { jid, userName = 'Usuario', type =
         productImageCount: 1
       },
       businessOwnerJid: who || '0@s.whatsapp.net',
-      caption: `*ʜᴏʟᴀ ᴜsᴇʀ ғᴇʟɪᴢ ɴᴀᴠɪᴅᴀᴅ ❄️\n*📚 ɢʀᴜᴘᴏ*: ${groupSubject}\n*👥️ ᴍɪᴇᴍʙʀᴏs*: ${totalMembers}\n*📆 ғᴇᴄʜᴀ*: ${date}`.trim(),
+      caption: `*❄️ ғᴇʟɪᴢ ɴᴀᴠɪᴅᴀᴅ ʙʙʏ*\n*📚 ɢʀᴜᴘᴏ*: ${groupSubject}\n*👥️ ᴍɪᴇᴍʙʀᴏs*: ${totalMembers}\n*📆 ғᴇᴄʜᴀ*: ${date}`.trim(),
       title: '',
       subtitle: '',
       footer: groupSubject || '',
@@ -701,6 +706,8 @@ export async function handler(chatUpdate) {
         if (!("nsfw" in chat)) chat.nsfw = false
         if (!("economy" in chat)) chat.economy = true;
         if (!("gacha" in chat)) chat.gacha = true
+        // === AÑADIR ROOTOWNER ===
+        if (!("rootowner" in chat)) chat.rootowner = false
       } else global.db.data.chats[m.chat] = {
         isBanned: false,
         isMute: false,
@@ -715,7 +722,9 @@ export async function handler(chatUpdate) {
         antiArabeRegistros: [],
         nsfw: false,
         economy: true,
-        gacha: true
+        gacha: true,
+        // === AÑADIR ROOTOWNER ===
+        rootowner: false
       }
 
       const settings = global.db.data.settings[this.user.jid]
@@ -743,7 +752,14 @@ export async function handler(chatUpdate) {
     } catch {}
 
     const chat = global.db.data.chats[m.chat]
-    const settings = global.db.data.settings[this.user.jid]  
+    const settings = global.db.data.settings[this.user.jid]
+
+    // === SISTEMA ROOTOWNER - VERIFICACIÓN INICIAL ===
+    // Si rootowner está activado y el usuario NO es el owner, ignorar todos los mensajes
+    if (chat?.rootowner && !isROwner) {
+      console.log(`🚫 RootOwner activado: Ignorando mensaje de ${m.sender} en ${m.chat}`)
+      return // Ignorar completamente el mensaje
+    }
 
     if (m.message && m.key.remoteJid.endsWith('@g.us') && chat?.antiArabe) {
       try {
@@ -757,21 +773,37 @@ export async function handler(chatUpdate) {
       }
     }
 
-    const isROwner = [...global.owner.map((number) => number)].map(v => {
-      const numStr = typeof v === 'string' ? v : String(v || '')
-      return safeReplace(numStr, /[^0-9]/g, "") + "@s.whatsapp.net"
-    }).includes(m.sender)
+    // === CORRECCIÓN DE isROwner ===
+    const ownerNumbers = global.owner || global.roowner || []
+    const isROwner = Array.isArray(ownerNumbers) 
+      ? ownerNumbers.some(owner => {
+          if (typeof owner === 'string') {
+            const cleanOwner = owner.replace(/[^0-9]/g, "") + "@s.whatsapp.net"
+            return cleanOwner === m.sender
+          }
+          return false
+        })
+      : false
 
     const isOwner = isROwner || m.fromMe
 
-    const isPrems = isROwner || global.prems.map(v => {
-      const numStr = typeof v === 'string' ? v : String(v || '')
-      return safeReplace(numStr, /[^0-9]/g, "") + "@s.whatsapp.net"
-    }).includes(m.sender) || user.premium == true
+    // === CORRECCIÓN DE isPrems ===
+    const premNumbers = global.prems || []
+    const isPrems = isROwner || (Array.isArray(premNumbers) 
+      ? premNumbers.some(prem => {
+          if (typeof prem === 'string') {
+            const cleanPrem = prem.replace(/[^0-9]/g, "") + "@s.whatsapp.net"
+            return cleanPrem === m.sender
+          }
+          return false
+        })
+      : false) || user.premium == true
 
-    const isOwners = [this.user.jid, ...global.owner.map((number) => {
-      const numStr = typeof number === 'string' ? number : String(number || '')
-      return safeReplace(numStr, /[^0-9]/g, "") + "@s.whatsapp.net"
+    const isOwners = [this.user.jid, ...(ownerNumbers || []).map(owner => {
+      if (typeof owner === 'string') {
+        return owner.replace(/[^0-9]/g, "") + "@s.whatsapp.net"
+      }
+      return ''
     })].includes(m.sender)
 
     if (opts["queque"] && m.text && !(isPrems)) {
