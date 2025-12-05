@@ -3,11 +3,12 @@
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import axios from 'axios'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-// Ruta a la carpeta de assets (donde guardarás las imágenes)
+// Ruta a la carpeta de assets
 const assetsPath = path.join(__dirname, '../assets')
 
 // Función para asegurarse de que la carpeta de assets exista
@@ -17,23 +18,34 @@ const ensureAssetsDir = () => {
     }
 }
 
-// Función para obtener la ruta de la imagen de bienvenida
-const getWelcomeImagePath = (chatId) => {
-    ensureAssetsDir()
-    return path.join(assetsPath, `welcome_${chatId}.jpg`)
-}
+// Función para obtener la imagen (desde URL o local)
+const getImageBuffer = async (chat, chatId, type) => {
+    const imageUrl = type === 'welcome' ? chat.welcomeImageUrl : chat.byeImageUrl
+    if (imageUrl) {
+        try {
+            const response = await axios.get(imageUrl, { responseType: 'arraybuffer' })
+            return Buffer.from(response.data, 'binary')
+        } catch (error) {
+            console.error(`[WELCOME] Error al descargar la imagen desde URL: ${imageUrl}`, error)
+        }
+    }
 
-// Función para obtener la ruta de la imagen de despedida
-const getByeImagePath = (chatId) => {
-    ensureAssetsDir()
-    return path.join(assetsPath, `bye_${chatId}.jpg`)
+    const customImagePath = path.join(assetsPath, `${type}_${chatId}.jpg`)
+    if (fs.existsSync(customImagePath)) {
+        return fs.readFileSync(customImagePath)
+    }
+
+    const defaultImagePath = path.join(assetsPath, `default_${type}.jpg`)
+    if (fs.existsSync(defaultImagePath)) {
+        return fs.readFileSync(defaultImagePath)
+    }
+
+    return null
 }
 
 // Función para formatear el número de miembro
 const formatMemberNumber = (num) => {
-    if (num % 100 >= 11 && num % 100 <= 13) {
-        return `${num}th`
-    }
+    if (num % 100 >= 11 && num % 100 <= 13) return `${num}th`
     switch (num % 10) {
         case 1: return `${num}st`
         case 2: return `${num}nd`
@@ -43,23 +55,23 @@ const formatMemberNumber = (num) => {
 }
 
 let handler = async (m, { conn }) => {
-    // Verificar si el mensaje es de un nuevo miembro
+    // El código de bienvenida y despedida va aquí...
+    // (El resto del código que te di antes va aquí sin cambios)
     if (!m.messageStubType) return
     
     const chatId = m.chat
     const chat = global.db.data.chats[chatId] || {}
     const groupMetadata = await conn.groupMetadata(chatId)
     const groupName = groupMetadata.subject
-    const groupDesc = groupMetadata.desc?.toString() || 'Sin descripción'
+    const groupDesc = groupMetadata.desc?.toString() || 'Sin descripción.'
     const groupMembersCount = groupMetadata.participants.length
     
     // Mensaje de bienvenida
-    if (m.messageStubType === 27) { // 27 es el código para "nuevo miembro"
+    if (m.messageStubType === 27) {
         const user = m.messageStubParameters[0] + '@s.whatsapp.net'
         const userName = conn.getName(user)
         const memberNumber = formatMemberNumber(groupMembersCount)
         
-        // Mensaje de bienvenida personalizado o por defecto
         let welcomeMessage = chat.welcomeMessage || 
             `╭─「 ✨ *BIENVENIDO/A* ✨ 」\n` +
             `│\n` +
@@ -72,37 +84,35 @@ let handler = async (m, { conn }) => {
             `│ 📋 *Grupo:* ${groupName}\n` +
             `│ 🆔 *ID del grupo:* ${chatId}\n` +
             `│\n` +
+            `│ 📜 *Descripción del grupo:*\n` +
             `│ ${groupDesc}\n` +
             `│\n` +
             `╰─◉`
         
-        // Enviar mensaje con mención al usuario
         await conn.sendMessage(chatId, { 
             text: welcomeMessage, 
             mentions: [user] 
         }, { quoted: m })
-        
-        // Enviar imagen de bienvenida personalizada o por defecto
-        const welcomeImagePath = getWelcomeImagePath(chatId)
-        if (fs.existsSync(welcomeImagePath)) {
+
+        const imageBuffer = await getImageBuffer(chat, chatId, 'welcome')
+        if (imageBuffer) {
             await conn.sendMessage(chatId, { 
-                image: fs.readFileSync(welcomeImagePath), 
-                caption: '¡Bienvenido/a al grupo!' 
+                image: imageBuffer, 
+                caption: '¡Disfruta tu estancia en el grupo! 🎉'
             }, { quoted: m })
         }
     }
     
     // Mensaje de despedida
-    if (m.messageStubType === 28) { // 28 es el código para "miembro abandonó el grupo"
+    if (m.messageStubType === 28) {
         const user = m.messageStubParameters[0] + '@s.whatsapp.net'
         const userName = conn.getName(user)
-        const memberNumber = formatMemberNumber(groupMembersCount)
+        const memberNumber = formatMemberNumber(groupMembersCount + 1)
         
-        // Mensaje de despedida personalizado o por defecto
         let byeMessage = chat.byeMessage || 
             `╭─「 👋 *DESPEDIDA* 👋 」\n` +
             `│\n` +
-            `│ 👋 @${user.split('@')[0]} ha abandonado el grupo\n` +
+            `│ 👋 @${user.split('@')[0]} ha abandonado el grupo.\n` +
             `│\n` +
             `│ 📝 *Nombre:* ${userName}\n` +
             `│ 🏷️ *Usuario:* @${user.split('@')[0]}\n` +
@@ -113,18 +123,16 @@ let handler = async (m, { conn }) => {
             `│\n` +
             `╰─◉`
         
-        // Enviar mensaje con mención al usuario
         await conn.sendMessage(chatId, { 
             text: byeMessage, 
             mentions: [user] 
         }, { quoted: m })
-        
-        // Enviar imagen de despedida personalizada o por defecto
-        const byeImagePath = getByeImagePath(chatId)
-        if (fs.existsSync(byeImagePath)) {
+
+        const imageBuffer = await getImageBuffer(chat, chatId, 'bye')
+        if (imageBuffer) {
             await conn.sendMessage(chatId, { 
-                image: fs.readFileSync(byeImagePath), 
-                caption: '¡Hasta pronto!' 
+                image: imageBuffer, 
+                caption: '¡Esperamos verte pronto! 👋'
             }, { quoted: m })
         }
     }
