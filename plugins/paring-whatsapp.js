@@ -1,5 +1,5 @@
 import pkg from '@whiskeysockets/baileys'
-const { useMultiFileAuthState, fetchLatestBaileysVersion, Browsers, DisconnectReason } = pkg
+const { useMultiFileAuthState, fetchLatestBaileysVersion, Browsers, DisconnectReason, generateWAMessageFromContent, proto } = pkg
 import pino from "pino";
 import { protoType, serialize, makeWASocket } from '../lib/simple.js'
 import path from 'path'
@@ -127,31 +127,53 @@ let handler = async (m, { conn, args, usedPrefix, command }) => {
             // Emoji cuando se genera el código
             await conn.sendMessage(m.chat, { react: { text: '✅️', key: m.key } })
 
-            // SISTEMA DE BOTÓN QUE FUNCIONA
-            const interactiveButtons = [{
-              name: "cta_copy",
-              buttonParamsJson: JSON.stringify({
-                display_text: "📋 Copiar Código",
-                id: "copy-jadibot-code",
-                copy_code: rawCode
-              })
-            }];
+            // Crear mensaje interactivo usando la estructura correcta
+            const msg = generateWAMessageFromContent(m.chat, {
+              viewOnceMessage: {
+                message: {
+                  interactiveMessage: proto.Message.InteractiveMessage.create({
+                    header: proto.Message.InteractiveMessage.Header.create({
+                      hasMediaAttachment: true,
+                      imageMessage: proto.Message.ImageMessage.create({
+                        url: "https://cdn.russellxz.click/73109d7e.jpg",
+                        mimetype: "image/jpeg",
+                        fileSha256: Buffer.from([]),
+                        fileLength: 999999,
+                        height: 1080,
+                        width: 1080,
+                        mediaKey: Buffer.from([]),
+                        fileEncSha256: Buffer.from([]),
+                        directPath: "",
+                        mediaKeyTimestamp: Date.now(),
+                        jpegThumbnail: Buffer.from([])
+                      })
+                    }),
+                    body: proto.Message.InteractiveMessage.Body.create({
+                      text: `🔐 *CÓDIGO DE VINCULACIÓN*\n\n📱 *Instrucciones:*\n1. Abre WhatsApp en tu teléfono\n2. Ve a Ajustes → Dispositivos vinculados\n3. Toca Vincular un dispositivo\n4. Usa este código:\n\n🔢 *Código:* ${rawCode.match(/.{1,4}/g)?.join("-")}\n\n⚠️ *El código expira en 45 segundos*`
+                    }),
+                    footer: proto.Message.InteractiveMessage.Footer.create({
+                      text: "Presiona 'Copiar Código' para copiarlo fácilmente"
+                    }),
+                    nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+                      buttons: [
+                        {
+                          name: "cta_copy",
+                          buttonParamsJson: JSON.stringify({
+                            display_text: "📋 Copiar Código",
+                            id: "copy-jadibot-code",
+                            copy_code: rawCode
+                          })
+                        }
+                      ]
+                    })
+                  })
+                }
+              }
+            }, { quoted: m })
 
-            // Formatear el código con guiones
-            const formattedCode = rawCode.match(/.{1,4}/g)?.join("-") || rawCode
+            await conn.relayMessage(msg.key.remoteJid, msg.message, { messageId: msg.key.id })
 
-            // ENVIAR MENSAJE CON IMAGEN Y BOTÓN
-            const interactiveMessage = {
-              image: { url: "https://cdn.russellxz.click/73109d7e.jpg" },
-              caption: `🔐 *CÓDIGO DE VINCULACIÓN*\n\n📱 *Instrucciones:*\n1. Abre WhatsApp en tu teléfono\n2. Ve a Ajustes → Dispositivos vinculados\n3. Toca Vincular un dispositivo\n4. Usa este código:\n\n🔢 *Código:* ${formattedCode}\n\n⚠️ *El código expira en 45 segundos*\n\n📌 Haz clic en el botón de abajo para copiar el código automáticamente.`,
-              footer: "Presiona 'Copiar Código' para copiarlo fácilmente",
-              templateButtons: interactiveButtons,
-              viewOnce: false
-            };
-
-            await conn.sendMessage(m.chat, interactiveMessage, { quoted: m });
-
-            console.log(`Código de vinculación enviado: ${rawCode}`);
+            console.log(`Código de vinculación enviado: ${rawCode}`)
 
           } catch (err) {
             console.error('Error al obtener pairing code:', err)
