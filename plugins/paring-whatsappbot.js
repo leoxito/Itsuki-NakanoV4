@@ -45,7 +45,7 @@ let warn = `
 const totalUsers = users.length;
 const replyMessage = totalUsers > limit ? warn : (message || 'Aun No Hay Sesiones Activas..');
 const cap = `
-> 💭 Hello +${m.sender.split('@')[0]}! Below is the list of active subbots on Itsuki Nakano'
+> 💭 Hello +${m.sender.split('@')[0]}! Below is the list of active subbots on Itsuki Nakano
 
 > 💾 Sesiones guardadas : ${await info(jadi)}
 > 🤖 Sesiones Activas : ${totalUsers || '0'}
