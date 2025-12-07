@@ -10,6 +10,14 @@ import { dirname } from 'path'
 
 global.__dirname = (url) => dirname(fileURLToPath(url));
 
+
+//aquí los retirados👑🥀
+global.retirado = [
+['5216641784469','BrayanOFC',true]
+];
+
+/*habrán comandos especiales para los retirados algo q los identifique | nota ustedes pondrán los coamndos y q solo funcione para los retirados*/
+
 // Configuraciones principales
 global.roowner = ['573187418668']
 global.owner = [
@@ -17,7 +25,6 @@ global.owner = [
    ['50493732693', 'Ado 🐢', true],
    ['5216671548329', 'Legna', true],
    ['50496228919', '𝐒𝐨𝐩𝐨𝐫𝐭𝐞 𝐱 𝐒𝐭𝐚𝐟𝐟 𝐈𝐭𝐬𝐮𝐤𝐢 👨🏻‍💻👑', true],
-// son pndjos todos menos Maycol por poco lo es
    ['595972314588', '۪〬.࠭⤿ 👑 ⋅ 𝘿𝙖𝙫𝙞𝙙   𝙭𝙯𝙨𝙮', true],
    ['573187418668', '𝙇𝙚𝙤   𝙭𝙯𝙨𝙮  🦇🩸', true],
    ['5216641784469', 'BrayanOFC', true],
