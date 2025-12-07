@@ -1,748 +1,563 @@
-import { smsg } from "./lib/simple.js"
-import { format } from "util"
-import { fileURLToPath } from "url"
-import path, { join } from "path"
-import fs, { unwatchFile, watchFile } from "fs"
-import chalk from "chalk"
-import fetch from "node-fetch"
-import ws from "ws"
-import { startSubBot } from './plugins/paring-whatsapp.js' 
+import { fileURLToPath, pathToFileURL } from 'url'
+import path from 'path'
+import os from 'os'
+import fs from 'fs'
+import chalk from 'chalk'
+import readline from 'readline'
+import qrcode from 'qrcode-terminal'
+import libPhoneNumber from 'google-libphonenumber'
+import cfonts from 'cfonts'
+import pino from 'pino'
+import { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, jidNormalizedUser } from '@whiskeysockets/baileys'
+import { makeWASocket, protoType, serialize } from './lib/simple.js'
+import config from './config.js'
+import { loadDatabase, saveDatabase, DB_PATH } from './lib/db.js'
+import { watchFile } from 'fs'
 
+const phoneUtil = (libPhoneNumber.PhoneNumberUtil || libPhoneNumber.default?.PhoneNumberUtil).getInstance()
 
-const { proto } = (await import("@whiskeysockets/baileys")).default
-const isNumber = x => typeof x === "number" && !isNaN(x)
-const delay = ms => isNumber(ms) && new Promise(resolve => setTimeout(function () {
-clearTimeout(this)
-resolve()
-}, ms))
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
-const globalPrefixes = [
-  '.', ',', '!', '#', '$', '%', '&', '*',
-  '-', '_', '+', '=', '|', '\\', '/', '~',
-  '>', '<', '^', '?', ':', ';'
-]
+// DEFINIR _filename aquí para evitar el error
+global._filename = __filename
 
-const detectPrefix = (text, customPrefix = null) => {
-  if (!text || typeof text !== 'string') return null
+global.prefixes = Array.isArray(config.prefix) ? [...config.prefix] : []
+global.owner = Array.isArray(config.owner) ? config.owner : []
+global.opts = global.opts && typeof global.opts === 'object' ? global.opts : {}
 
-  if (customPrefix) {
-    if (Array.isArray(customPrefix)) {
-      for (const prefix of customPrefix) {
-        if (text.startsWith(prefix)) {
-          return { 
-            match: prefix, 
-            prefix: prefix, 
-            type: 'custom'
+if (!fs.existsSync("./tmp")) {
+  fs.mkdirSync("./tmp");
+}
+
+// Lógica de watchFile y recarga de config
+const CONFIG_PATH = path.join(__dirname, 'config.js')
+watchFile(CONFIG_PATH, async () => {
+  try {
+    const fresh = (await import('./config.js?update=' + Date.now())).default
+    if (Array.isArray(fresh.prefix)) {
+      global.prefixes = [...fresh.prefix]
+    }
+    if (Array.isArray(fresh.owner)) {
+      global.owner = fresh.owner
+    }
+
+    const prefStr = Array.isArray(global.prefixes) && global.prefixes.length ? global.prefixes.join(' ') : '-'
+    const ownersStr = Array.isArray(global.owner) && global.owner.length
+      ? global.owner.map(o => Array.isArray(o) ? (o[0] || '') : (o || '')).filter(Boolean).join(', ')
+      : '-'
+    const cfgInfo = `\n╭─────────────────────────────◉\n│ ${chalk.black.bgRedBright.bold('        🔁 CONFIG ACTUALIZADA        ')}\n│ 「 🗂 」${chalk.cyan('Archivo: config.js')}\n│ 「 🧩 」${chalk.yellow('Prefijos: ')}${chalk.white(prefStr)}\n│ 「 👑 」${chalk.yellow('Owners:   ')}${chalk.white(ownersStr)}\n╰─────────────────────────────◉\n`
+    console.log(cfgInfo)
+  } catch (e) {
+    console.log('[Config] Error recargando config:', e.message)
+  }
+})
+
+// Lógica de carga de plugins
+global.plugins = {}
+global.commandIndex = {}
+async function loadPlugins() {
+  global.plugins = {}
+  global.commandIndex = {}
+  const PLUGIN_PATH = path.join(__dirname, 'plugins')
+  if (!fs.existsSync(PLUGIN_PATH)) {
+    console.log('[Plugins] Carpeta no encontrada:', PLUGIN_PATH)
+    return
+  }
+  const entries = fs.readdirSync(PLUGIN_PATH)
+  for (const entry of entries) {
+    const entryPath = path.join(PLUGIN_PATH, entry)
+    const fileName = path.basename(entryPath) // Obtenemos el nombre del archivo/carpeta
+
+    if (fs.statSync(entryPath).isDirectory()) {
+      const files = fs.readdirSync(entryPath).filter(f => f.endsWith('.js'))
+      for (const file of files) {
+        const full = path.join(entryPath, file)
+        await importAndIndexPlugin(full)
+      }
+    } else if (entry.endsWith('.js')) {
+      // ⚠️ CORRECCIÓN DUPLICIDAD: Ignorar paring-whatsapp.js porque se carga por handler.js
+      if (fileName === 'paring-whatsapp.js') {
+        console.log(chalk.yellow(`[Plugins] Ignorando ${fileName} (Es un módulo conector, se carga en handler.js).`));
+        continue; 
+      }
+      await importAndIndexPlugin(entryPath)
+    }
+  }
+  try {
+    const total = Object.keys(global.plugins).length
+    const plugInfo = `\n╭─────────────────────────────◉\n│ ${chalk.red.bgBlueBright.bold('        🧩 PLUGINS CARGADOS        ')}\n│ 「 📦 」${chalk.yellow('Total: ')}${chalk.white(total)}\n╰─────────────────────────────◉\n`
+    console.log(plugInfo)
+  } catch {
+    console.log('[Plugins]', Object.keys(global.plugins).length, 'cargados')
+  }
+}
+
+async function importAndIndexPlugin(fullPath) {
+  try {
+    const mod = await import(pathToFileURL(fullPath).href + `?update=${Date.now()}`)
+    const plug = mod.default || mod
+    if (!plug) return
+    plug.__file = path.basename(fullPath)
+    if (Array.isArray(plug.command)) plug.command = plug.command.map(c => typeof c === 'string' ? c.toLowerCase() : c)
+    else if (typeof plug.command === 'string') plug.command = plug.command.toLowerCase()
+    global.plugins[plug.__file] = plug
+    const cmds = []
+    if (typeof plug.command === 'string') cmds.push(plug.command)
+    else if (Array.isArray(plug.command)) cmds.push(...plug.command.filter(c => typeof c === 'string'))
+    for (const c of cmds) {
+      const key = c.toLowerCase()
+      if (!global.commandIndex[key]) global.commandIndex[key] = plug
+    }
+  } catch (e) {
+    try {
+      const fname = path.basename(fullPath)
+      const errBox = `\n╭─────────────────────────────◉\n│ ${chalk.white.bgRed.bold('        ❌ PLUGIN LOAD ERROR        ')}\n│ 「 🧩 」${chalk.yellow('Plugin: ')}${chalk.white(fname)}\n│ 「 ⚠️ 」${chalk.yellow('Error:  ')}${chalk.white(e.message || e)}\n╰─────────────────────────────◉\n`
+      console.error(errBox)
+    } catch {
+      console.error('[PluginLoadError]', path.basename(fullPath), e.message)
+    }
+  }
+}
+
+try { await loadDatabase() } catch (e) { console.log('[DB] Error cargando database:', e.message) }
+try {
+  const dbInfo = `\n╭─────────────────────────────◉\n│ ${chalk.red.bgBlueBright.bold('        📦 BASE DE DATOS        ')}\n│ 「 🗃 」${chalk.yellow('Archivo: ')}${chalk.white(DB_PATH)}\n╰─────────────────────────────◉\n`
+  console.log(dbInfo)
+} catch {}
+await loadPlugins()
+
+// --- 🎯 CORRECCIÓN CLAVE: Importación de handler y conector ---
+let handler
+try { 
+  const mod = await import('./handler.js');
+  handler = mod.handler; 
+} catch (e) { 
+  console.error('[Handler] Error importando handler principal:', e.message); 
+}
+
+let startSubBot
+try { 
+  // 🟢 CORRECCIÓN DE RUTA Y ORTOGRAFÍA: Apuntando a './plugins/paring-whatsapp.js'
+  const modSub = await import('./plugins/paring-whatsapp.js'); 
+  startSubBot = modSub.startSubBot; 
+} catch (e) { 
+  // 💡 Muestra el error de importación con la ruta corregida
+  console.error('[SubBot Connector] Error importando startSubBot. Asegúrate de que ./plugins/paring-whatsapp.js exista:', e.message); 
+}
+// --- FIN CORRECCIÓN CLAVE ---
+
+try {
+  const { say } = cfonts
+  const botDisplayName = (config && (config.botName || config.name || global.namebot)) || 'Bot'
+  console.log(chalk.magentaBright(`\n🌱Iniciando ${botDisplayName}...`))
+  say('ItsukiV3', { font: 'simple', align: 'left', gradient: ['green','white'] })
+  say('Powered by leo 👑', { font: 'console', align: 'center', colors: ['cyan','magenta','yellow'] })
+  try { protoType() } catch {}
+  try { serialize() } catch {}
+  const packageJsonPath = path.join(__dirname, 'package.json')
+  let packageJsonObj = {}
+  try { const rawPkg = await fs.promises.readFile(packageJsonPath, 'utf8'); packageJsonObj = JSON.parse(rawPkg) } catch {}
+  const ramInGB = os.totalmem() / (1024 * 1024 * 1024)
+  const freeRamInGB = os.freemem() / (1024 * 1024 * 1024)
+  const currentTime = new Date().toLocaleString()
+  const info = `\n╭─────────────────────────────◉\n│ ${chalk.red.bgBlueBright.bold('        🖥 INFORMACIÓN DEL SISTEMA        ')}\n│「 💻 」${chalk.yellow(`SO: ${os.type()}, ${os.release()} - ${os.arch()}`)}\n│「 💾 」${chalk.yellow(`RAM Total: ${ramInGB.toFixed(2)} GB`)}\n│「 💽 」${chalk.yellow(`RAM Libre: ${freeRamInGB.toFixed(2)} GB`)}\n╰─────────────────────────────◉\n\n╭─────────────────────────────◉\n│ ${chalk.red.bgGreenBright.bold('        🟢 INFORMACIÓN DEL BOT        ')}\n│「 🍃 」${chalk.cyan(`Nombre: ${packageJsonObj.name || 'desconocido'}`)}\n│「 🔰 」${chalk.cyan(`Versión: ${packageJsonObj.version || '0.0.0'}`)}\n│「 📜 」${chalk.cyan(`Descripción: ${packageJsonObj.description || ''}`)}\n│「 👤 」${chalk.cyan(`Autor: ${(packageJsonObj.author && packageJsonObj.author.name) ? packageJsonObj.author.name : (packageJsonObj.author || 'N/A')} (@leo )`)}\n│「 👑 」${chalk.cyan('Colaborador: Bryan ofc x davidxzy')}\n╰─────────────────────────────◉\n\n╭─────────────────────────────◉\n│ ${chalk.red.bgMagenta.bold('        ⏰ HORA ACTUAL        ')}\n│「 🕒 」${chalk.magenta(`${currentTime}`)}\n╰─────────────────────────────◉\n`
+  console.log(info)
+} catch (e) {
+  console.log('[Banner] Error al mostrar banners:', e.message)
+}
+
+function ask(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  return new Promise(res => rl.question(question, ans => { rl.close(); res(ans) }))
+}
+
+async function chooseMethod(authDir) {
+  const credsPath = path.join(authDir, 'creds.json')
+  if (fs.existsSync(credsPath)) return 'existing'
+  if (process.argv.includes('--qr')) return 'qr'
+  if (process.argv.includes('--code')) return 'code'
+  if (process.env.LOGIN_MODE === 'qr') return 'qr'
+  if (process.env.LOGIN_MODE === 'code') return 'code'
+  let ans
+  do {
+    console.clear()
+    const banner = `\n╭─────────────────────────────◉\n│ ${chalk.red.bgBlueBright.bold('    ⚙ MÉTODO DE CONEXIÓN BOT    ')}\n│「 🗯 」${chalk.yellow('Selecciona cómo quieres conectarte')}\n│「 📲 」${chalk.yellow.bgRed.bold('1. Escanear Código QR')}\n│「 🔛 」${chalk.red.bgGreenBright.bold('2. Código de Emparejamiento')}\n│\n│「 ✨️ 」${chalk.gray('Usa el código si tienes problemas con el QR')}\n│「 🚀 」${chalk.gray('Ideal para la primera configuración')}\n│\n╰─────────────────────────────◉\n${chalk.magenta('--->')} ${chalk.bold('Elige (1 o 2): ')}`
+    ans = await ask(banner)
+  } while (!['1','2'].includes(ans))
+  return ans === '1' ? 'qr' : 'code'
+}
+
+const PROCESS_START_AT = Date.now()
+
+// --- Función para cargar Sub-Bots automáticamente ---
+const loadSubBots = async (conn) => {
+    if (!startSubBot) {
+        console.error('❌ startSubBot no está disponible. El sistema de auto-reconexión de sub-bots falló.')
+        return
+    }
+
+    const sessionsDir = path.join(__dirname, 'Sessions/SubBot') 
+
+    if (!fs.existsSync(sessionsDir)) {
+        console.log(chalk.gray('No se encontró el directorio Sessions/SubBot. No hay sub-bots para cargar.'))
+        return
+    }
+
+    try {
+        const subBotFolders = fs.readdirSync(sessionsDir)
+            .filter(file => fs.statSync(path.join(sessionsDir, file)).isDirectory())
+
+        if (subBotFolders.length === 0) {
+            console.log(chalk.gray('No se encontraron sesiones de sub-bots para reactivar.'))
+            return
+        }
+
+        const info = `\n╭─────────────────────────────◉\n│ ${chalk.black.bgYellowBright.bold('   🔄 INICIANDO AUTO-RECONEXIÓN   ')}\n│ 「 🤖 」${chalk.yellow(`Total de Sub-Bots: ${subBotFolders.length}`)}\n╰─────────────────────────────◉\n`
+        console.log(info)
+
+        for (const userName of subBotFolders) {
+            console.log(chalk.cyan(`   → Reconectando sesión de: ${userName}...`))
+            // Se llama a startSubBot. Se pasa 'null' para el inicio automático (sin mensaje de chat).
+            startSubBot(userName, conn, null) 
+        }
+
+    } catch (e) {
+        const errBox = `\n╭─────────────────────────────◉\n│ ${chalk.white.bgRed.bold('     ❌ ERROR AL CARGAR SUB-BOTS    ')}\n│ 「 ⚠️ 」${chalk.yellow('Error:  ')}${chalk.white(e.message || e)}\n╰─────────────────────────────◉\n`
+        console.error(errBox)
+    }
+}
+// --- FIN loadSubBots ---
+
+async function startBot() {
+  const authDir = path.join(__dirname, config.sessionDirName || config.sessionName || global.sessions || 'sessions')
+  if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true })
+
+  const { state, saveCreds } = await useMultiFileAuthState(authDir)
+  const method = await chooseMethod(authDir)
+  const { version } = await fetchLatestBaileysVersion()
+  const sock = makeWASocket({
+    version,
+    logger: pino({ level: 'silent' }),
+    auth: state,
+    markOnlineOnConnect: true,
+    syncFullHistory: false,
+    browser: method === 'code' ? Browsers.macOS('Safari') : ['SuperBot','Chrome','1.0.0']
+  })
+
+  sock.__sessionOpenAt = sock.__sessionOpenAt || 0
+
+  // LISTENER DE MENSAJES PRINCIPAL
+  sock.ev.on('messages.upsert', async (chatUpdate) => {
+    try {
+      const since = sock.__sessionOpenAt || PROCESS_START_AT
+      const graceMs = 5000
+      const msgs = Array.isArray(chatUpdate?.messages) ? chatUpdate.messages : []
+      const fresh = msgs.filter((m) => {
+        try {
+          const tsSec = Number(m?.messageTimestamp || 0)
+          const tsMs = isNaN(tsSec) ? 0 : (tsSec > 1e12 ? tsSec : tsSec * 1000)
+          if (!tsMs) return true
+          return tsMs >= (since - graceMs)
+        } catch { return true }
+      })
+      if (!fresh.length) return
+      const filteredUpdate = { ...chatUpdate, messages: fresh }
+      await handler?.call(sock, filteredUpdate)
+    } catch (e) { console.error('[HandlerError]', e?.message || e) }
+  })
+
+  sock.ev.on('creds.update', saveCreds)
+
+  try {
+    setInterval(() => { saveDatabase().catch(() => {}) }, 60000)
+    const shutdown = async () => { try { await saveDatabase() } catch {} process.exit(0) }
+    process.on('SIGINT', shutdown)
+    process.on('SIGTERM', shutdown)
+  } catch {}
+
+  async function ensureAuthDir() {
+    try { if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true }) } catch (e) { console.error('[AuthDir]', e.message) }
+  }
+
+  async function generatePairingCodeWithRetry(number, maxAttempts = 5) {
+    let attempt = 0
+    while (attempt < maxAttempts) {
+      try {
+        await ensureAuthDir()
+        return await sock.requestPairingCode(number)
+      } catch (err) {
+        const status = err?.output?.statusCode || err?.output?.payload?.statusCode
+        const transient = status === 428 || err?.code === 'ENOENT' || /Connection Closed/i.test(err?.message || '') || /not open/i.test(err?.message || '')
+        if (!transient) throw err
+        attempt++
+        const wait = 500 + attempt * 500
+        console.log(`[Pairing] Aún no listo (intentando de nuevo en ${wait}ms) intento ${attempt}/${maxAttempts}`)
+        await new Promise(r => setTimeout(r, wait))
+      }
+    }
+    throw new Error('No se pudo obtener el código tras reintentos')
+  }
+
+  let pairingRequested = false
+  let pairingCodeGenerated = false
+  let codeRegenInterface = null
+
+  async function maybeStartPairingFlow() {
+    if (method !== 'code') return
+    if (sock.authState.creds.registered) return
+    if (pairingRequested) return
+    pairingRequested = true
+
+    async function promptForNumber(initialMsg) {
+      let attempts = 0
+      let obtained = ''
+      while (attempts < 5 && !obtained) {
+        const raw = await ask(initialMsg)
+        let cleaned = String(raw || '').trim()
+        if (!cleaned) { console.log(chalk.red('[Pairing] Entrada vacía.')); attempts++; continue }
+        cleaned = cleaned.replace(/\s+/g,'')
+        if (!cleaned.startsWith('+')) cleaned = '+' + cleaned
+        const valid = await isValidPhoneNumber(cleaned).catch(()=>false)
+        if (valid) { obtained = cleaned.replace(/[^0-9]/g,''); break }
+        console.log(chalk.yellow(`[Pairing] Número no válido: ${cleaned}. Intenta de nuevo.`))
+        attempts++
+      }
+      return obtained
+    }
+
+    async function persistBotNumberIfNeeded(num) {
+      try {
+        if (!num) return
+        const cfgPath = path.join(__dirname, 'config.js')
+        const file = await fs.promises.readFile(cfgPath, 'utf8')
+        let updated = file
+        const patterns = [
+          { re: /global\.botNumber\s*=\s*global\.botNumber\s*\|\|\s*['"].*?['"]\s*;?/m, repl: `global.botNumber = '${num}'` },
+          { re: /global\.botNumber\s*=\s*['"].*?['"]\s*;?/m, repl: `global.botNumber = '${num}'` },
+          { re: /botNumber\s*:\s*['"].*?['"]/m, repl: `botNumber: '${num}'` }
+        ]
+        for (const { re, repl } of patterns) {
+          if (re.test(updated)) { updated = updated.replace(re, repl); break }
+        }
+        if (updated !== file) {
+          await fs.promises.writeFile(cfgPath, updated)
+          if (config) config.botNumber = num
+          global.botNumber = num
+          console.log(chalk.gray('[Config] botNumber guardado en config.js'))
+        }
+      } catch (e) {
+        console.log(chalk.red('[Config] No se pudo actualizar botNumber:', e.message))
+      }
+    }
+
+    let number = ''
+    function primaryOwnerNumber() {
+      const o = config.owner
+      if (!o) return ''
+      if (Array.isArray(o)) {
+        const first = o[0]
+        if (!first) return ''
+        if (Array.isArray(first)) return (first[0] || '').toString()
+        if (typeof first === 'string') return first
+      }
+      if (typeof o === 'string') return o
+      return ''
+    }
+    const candidate = (config.botNumber ? config.botNumber.toString() : '').trim().replace(/[^0-9]/g,'') || primaryOwnerNumber().replace(/[^0-9]/g,'')
+    if (candidate) {
+      let confirm = await ask(`\n${chalk.cyan('Detectado número configurado:')} ${chalk.yellow('+'+candidate)} ${chalk.white('¿Usar este número? (si/no): ')}`)
+      confirm = (confirm || '').trim().toLowerCase()
+      if (/^(s|si|sí)$/.test(confirm)) {
+        number = candidate
+      } else if (!/^no$/.test(confirm)) {
+        const retry = await ask(`${chalk.yellow('Escribe si o no: ')}`)
+        if (/^(s|si|sí)$/i.test(retry.trim())) number = candidate
+      }
+    }
+    if (!number) {
+      number = await promptForNumber(`\n╭─────────────────────────────◉\n│ ${chalk.black.bgGreenBright.bold('  📞 INGRESO DE NÚMERO WHATSAPP  ')}\n│「 ✨ 」${chalk.whiteBright('Introduce tu número con prefijo de país')}\n│「 🔃 」${chalk.yellowBright('Ejemplo: +57321XXXXXXX')}\n│\n│${chalk.gray('Puede incluir +, se ignorarán espacios.')}\n╰─────────────────────────────◉\n${chalk.magenta('--->')} ${chalk.bold('Número: ')}`)
+      if (!number) {
+        console.log(chalk.red('[Pairing] No se obtuvo un número válido. Reinicia con --code.'))
+        pairingRequested = false
+        return
+      }
+      await persistBotNumberIfNeeded(number)
+    } else if (!config.botNumber || config.botNumber.replace(/[^0-9]/g,'') !== number) {
+      await persistBotNumberIfNeeded(number)
+    }
+
+    const launchCodeGeneration = async () => {
+      if (pairingCodeGenerated || sock.authState.creds.registered) return
+      pairingCodeGenerated = true
+      try {
+        console.log(chalk.gray(`[Pairing] Generando código para +${number} ...`))
+        const started = Date.now()
+        const code = await generatePairingCodeWithRetry(number)
+        const ms = Date.now() - started
+        const formatted = code.match(/.{1,4}/g)?.join('-') || code
+        console.log(`\n╭─────────────────────────────◉\n│ ${chalk.black.bgMagentaBright.bold('🔐 CÓDIGO DE VINCULACIÓN')}\n│「  」${chalk.bold.red(formatted)}   ${chalk.gray(`(${ms} ms)`)}\n│「  」${chalk.whiteBright('WhatsApp > Dispositivos vinculados > Vincular con número de teléfono')}\n╰─────────────────────────────◉\n`)
+        if (!codeRegenInterface) {
+          codeRegenInterface = readline.createInterface({ input: process.stdin, output: process.stdout })
+          console.log(chalk.cyan('\nEscribe = otra (si expiró el codigo para regenerar otro codigo).'))
+          codeRegenInterface.on('line', async () => {
+            if (sock.authState.creds.registered) {
+              console.log(chalk.green('[Pairing] Ya vinculado.'))
+              try { codeRegenInterface.close() } catch {}
+              return
+            }
+            pairingCodeGenerated = false
+            try { codeRegenInterface.close() } catch {}
+            codeRegenInterface = null
+            setTimeout(launchCodeGeneration, 400)
+          })
+        }
+      } catch (e) {
+        console.error('[PairingCode Error]', e.message || e)
+        pairingRequested = false
+        pairingCodeGenerated = false
+      }
+    }
+
+    if (sock?.ws?.readyState === 1) launchCodeGeneration()
+    else {
+      const total = Object.keys(global.plugins).length
+      const plugInfo = `\n╭─────────────────────────────◉\n│ ${chalk.black.bgGreenBright.bold('        🧩 PLUGINS CARGADOS        ')}\n│ 「 📦 」${chalk.yellow('Total: ')}${chalk.white(total)}\n╰─────────────────────────────◉\n`
+      console.log(plugInfo)
+      setTimeout(() => { if (!pairingCodeGenerated) launchCodeGeneration() }, 6000)
+    }
+  }
+
+  setTimeout(maybeStartPairingFlow, 2500)
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update
+    if (qr && method === 'qr') {
+      console.clear()
+      console.log(chalk.cyan('Escanea este QR con WhatsApp (Dispositivos vinculados):'))
+      try { qrcode.generate(qr, { small: true }) } catch { console.log(qr) }
+      console.log(chalk.gray('Para usar código de emparejamiento: reinicia con --code'))
+    }
+    if (method === 'code' && !sock.authState.creds.registered && !pairingRequested) {
+      setTimeout(maybeStartPairingFlow, 800)
+    }
+    if (connection === 'close') {
+      const statusCode = lastDisconnect?.error?.output?.statusCode
+      if (statusCode !== DisconnectReason.loggedOut) {
+        console.log('Conectando....')
+        startBot()
+      } else {
+        console.log('[Sesión cerrada] Borra la carpeta de credenciales y vuelve a vincular.')
+      }
+    } else if (connection === 'open') {
+      try {
+        sock.__sessionOpenAt = Date.now()
+        const rawId = sock?.user?.id || ''
+        const userJid = rawId ? jidNormalizedUser(rawId) : 'desconocido'
+        const userName = sock?.user?.name || sock?.user?.verifiedName || 'Desconocido'
+        console.log(chalk.green.bold(`[ ✅️ ]  Conectado a: ${userName}`))
+
+        // --- 🎯 LLAMADA CLAVE: Iniciar la reconexión de Sub-Bots ---
+        await loadSubBots(sock)
+        // --- FIN LLAMADA CLAVE ---
+
+        const jid = rawId
+        const num = jid.split(':')[0].replace(/[^0-9]/g,'')
+        if (num && !config.botNumber && !global.botNumber) {
+          try {
+            const cfgPath = path.join(__dirname, 'config.js')
+            const file = await fs.promises.readFile(cfgPath, 'utf8')
+            let updated = file
+            const emptyAssign = /global\.botNumber\s*=\s*(?:global\.botNumber\s*\|\|\s*)?['"]\s*['"]\s*;?/m
+            if (emptyAssign.test(updated)) {
+              updated = updated.replace(emptyAssign, `global.botNumber = '${num}'`)
+            } else if (/botNumber\s*:\s*''/m.test(updated)) {
+              updated = updated.replace(/botNumber\s*:\s*''/m, `botNumber: '${num}'`)
+            }
+            if (updated !== file) {
+              await fs.promises.writeFile(cfgPath, updated)
+              if (config) config.botNumber = num
+              global.botNumber = num
+              console.log(chalk.gray('[Config] botNumber autocompletado en config.js'))
+            }
+          } catch (e) {
+            console.log(chalk.red('[Config] Error guardando botNumber auto:', e.message))
           }
         }
+      } catch (e) {
+        console.log(chalk.red('[Open] Error en post-conexión:', e.message))
       }
     }
-    else if (typeof customPrefix === 'string' && text.startsWith(customPrefix)) {
-      return { 
-        match: customPrefix, 
-        prefix: customPrefix, 
-        type: 'custom'
-      }
-    }
-  }
+  })
 
-  for (const prefix of globalPrefixes) {
-    if (text.startsWith(prefix)) {
-      return { 
-        match: prefix, 
-        prefix: prefix, 
-        type: 'global'
-      }
-    }
-  }
-
-  return null
-}
-
-const paisesCodigos = {
-    'arabia': ['+966', '966'],
-    'emiratos': ['+971', '971'],
-    'qatar': ['+974', '974'],
-    'kuwait': ['+965', '965'],
-    'bahrein': ['+973', '973'],
-    'oman': ['+968', '968'],
-    'egipto': ['+20', '20'],
-    'jordania': ['+962', '962'],
-    'siria': ['+963', '963'],
-    'irak': ['+964', '964'],
-    'yemen': ['+967', '967'],
-    'palestina': ['+970', '970'],
-    'libano': ['+961', '961'],
-    'india': ['+91', '91'],
-    'pakistan': ['+92', '92'],
-    'bangladesh': ['+880', '880'],
-    'afganistan': ['+93', '93'],
-    'nepal': ['+977', '977'],
-    'sri-lanka': ['+94', '94'],
-    'nigeria': ['+234', '234'],
-    'ghana': ['+233', '233'],
-    'kenia': ['+254', '254'],
-    'etiopia': ['+251', '251'],
-    'sudafrica': ['+27', '27'],
-    'senegal': ['+221', '221'],
-    'china': ['+86', '86'],
-    'indonesia': ['+62', '62'],
-    'filipinas': ['+63', '63'],
-    'vietnam': ['+84', '84'],
-    'tailandia': ['+66', '66'],
-    'rusia': ['+7', '7'],
-    'ucrania': ['+380', '380'],
-    'rumania': ['+40', '40'],
-    'polonia': ['+48', '48'],
-    'brasil': ['+55', '55'],
-}
-
-function detectCountryByNumber(number) {
-    const numStr = number.toString()
-    for (const [country, codes] of Object.entries(paisesCodigos)) {
-        for (const code of codes) {
-            if (numStr.startsWith(code.replace('+', ''))) {
-                return country
-            }
-        }
-    }
-    return 'local'
-}
-
-function getCountryName(code) {
-    const countryNames = {
-        'arabia': 'Arabia Saudita 🇸🇦',
-        'emiratos': 'Emiratos Árabes 🇦🇪',
-        'qatar': 'Qatar 🇶🇦',
-        'kuwait': 'Kuwait 🇰🇼',
-        'bahrein': 'Bahréin 🇧🇭',
-        'oman': 'Omán 🇴🇲',
-        'egipto': 'Egipto 🇪🇬',
-        'jordania': 'Jordania 🇯🇴',
-        'siria': 'Siria 🇸🇾',
-        'irak': 'Irak 🇮🇶',
-        'yemen': 'Yemen 🇾🇪',
-        'palestina': 'Palestina 🇵🇸',
-        'libano': 'Líbano 🇱🇧',
-        'india': 'India 🇮🇳',
-        'pakistan': 'Pakistán 🇵🇰',
-        'bangladesh': 'Bangladesh 🇧🇩',
-        'afganistan': 'Afganistán 🇦🇫',
-        'nepal': 'Nepal 🇳🇵',
-        'sri-lanka': 'Sri Lanka 🇱🇰',
-        'nigeria': 'Nigeria 🇳🇬',
-        'ghana': 'Ghana 🇬🇭',
-        'kenia': 'Kenia 🇰🇪',
-        'etiopia': 'Etiopía 🇪🇹',
-        'sudafrica': 'Sudáfrica 🇿🇦',
-        'senegal': 'Senegal 🇸🇳',
-        'china': 'China 🇨🇳',
-        'indonesia': 'Indonesia 🇮🇩',
-        'filipinas': 'Filipinas 🇵🇭',
-        'vietnam': 'Vietnam 🇻🇳',
-        'tailandia': 'Tailandia 🇹🇭',
-        'rusia': 'Rusia 🇷🇺',
-        'ucrania': 'Ucrania 🇺🇦',
-        'rumania': 'Rumania 🇷🇴',
-        'polonia': 'Polonia 🇵🇱',
-        'brasil': 'Brasil 🇧🇷',
-        'local': 'Local 🌍'
-    }
-    return countryNames[code] || code
-}
-
-async function isUserAdmin(conn, groupJid, userJid) {
+  // LISTENER DE ACTUALIZACIONES DE GRUPO
+  sock.ev.on('group-participants.update', async (ev) => {
     try {
-        const metadata = await conn.groupMetadata(groupJid)
-        const participant = metadata.participants.find(p => p.id === userJid)
-        return participant && (participant.admin === 'admin' || participant.admin === 'superadmin')
-    } catch (error) {
-        return false
+      const { id, participants, action } = ev || {}
+      if (!id || !participants || !participants.length) return
+    } catch (e) { 
+      console.error('[GroupParticipantsUpdate]', e) 
     }
+  })
 }
 
-export async function handler(chatUpdate) {
-this.msgqueque = this.msgqueque || []
-this.uptime = this.uptime || Date.now()
-if (!chatUpdate) return
-this.pushMessage(chatUpdate.messages).catch(console.error)
-let m = chatUpdate.messages[chatUpdate.messages.length - 1]
-if (!m) return
-if (global.db.data == null) await global.loadDatabase()
+startBot()
 
-if (m.key && m.key.fromMe) return
-
-try {
-m = smsg(this, m) || m
-if (!m) return
-m.exp = 0
-try {
-let user = global.db.data.users[m.sender]
-if (typeof user !== "object") global.db.data.users[m.sender] = {}
-if (user) {
-if (!("name" in user)) user.name = m.name
-if (!("exp" in user) || !isNumber(user.exp)) user.exp = 0
-if (!("coin" in user) || !isNumber(user.coin)) user.coin = 0
-if (!("bank" in user) || !isNumber(user.bank)) user.bank = 0
-if (!("level" in user) || !isNumber(user.level)) user.level = 0
-if (!("health" in user) || !isNumber(user.health)) user.health = 100
-if (!("genre" in user)) user.genre = ""
-if (!("birth" in user)) user.birth = ""
-if (!("marry" in user)) user.marry = ""
-if (!("description" in user)) user.description = ""
-if (!("packstickers" in user)) user.packstickers = null
-if (!("premium" in user)) user.premium = false
-if (!("premiumTime" in user)) user.premiumTime = 0
-if (!("banned" in user)) user.banned = false
-if (!("bannedReason" in user)) user.bannedReason = ""
-if (!("commands" in user) || !isNumber(user.commands)) user.commands = 0
-if (!("afk" in user) || !isNumber(user.afk)) user.afk = -1
-if (!("afkReason" in user)) user.afkReason = ""
-if (!("warn" in user) || !isNumber(user.warn)) user.warn = 0
-} else global.db.data.users[m.sender] = {
-name: m.name,
-exp: 0,
-coin: 0,
-bank: 0,
-level: 0,
-health: 100,
-genre: "",
-birth: "",
-marry: "",
-description: "",
-packstickers: null,
-premium: false,
-premiumTime: 0,
-banned: false,
-bannedReason: "",
-commands: 0,
-afk: -1,
-afkReason: "",
-warn: 0
-}
-let chat = global.db.data.chats[m.chat]
-if (typeof chat !== "object") global.db.data.chats[m.chat] = {}
-if (chat) {
-if (!("isBanned" in chat)) chat.isBanned = false
-if (!("isMute" in chat)) chat.isMute = false
-if (!("welcome" in chat)) chat.welcome = false
-if (!("sWelcome" in chat)) chat.sWelcome = ""
-if (!("sBye" in chat)) chat.sBye = ""
-if (!("detect" in chat)) chat.detect = true
-if (!("modoadmin" in chat)) chat.modoadmin = false
-if (!("antiLink" in chat)) chat.antiLink = true
-if (!("nsfw" in chat)) chat.nsfw = false
-if (!("economy" in chat)) chat.economy = true
-if (!("gacha" in chat)) chat.gacha = true
-
-if (!("antiArabe" in chat)) chat.antiArabe = true
-if (!("antiExtranjero" in chat)) chat.antiExtranjero = false
-if (!("paisesBloqueados" in chat)) chat.paisesBloqueados = []
-if (!("rootowner" in chat)) chat.rootowner = false
-if (!("adminmode" in chat)) chat.adminmode = false
-if (!("prefix" in chat)) chat.prefix = null
-if (!("prefixes" in chat)) chat.prefixes = []
-
-} else global.db.data.chats[m.chat] = {
-isBanned: false,
-isMute: false,
-welcome: false,
-sWelcome: "",
-sBye: "",
-detect: true,
-modoadmin: false,
-antiLink: true,
-nsfw: false,
-economy: true,
-gacha: true,
-
-antiArabe: true,
-antiExtranjero: false,
-paisesBloqueados: [],
-rootowner: false,
-adminmode: false,
-prefix: null,
-prefixes: []
-
-}
-let settings = global.db.data.settings[this.user.jid]
-if (typeof settings !== "object") global.db.data.settings[this.user.jid] = {}
-if (settings) {
-if (!("self" in settings)) settings.self = false
-if (!("jadibotmd" in settings)) settings.jadibotmd = true
-} else global.db.data.settings[this.user.jid] = {
-self: false,
-jadibotmd: true
-}
-} catch (e) {
-console.error(e)
-}
-if (typeof m.text !== "string") m.text = ""
-const user = global.db.data.users[m.sender]
-try {
-const actual = user.name || ""
-const nuevo = m.pushName || await this.getName(m.sender)
-if (typeof nuevo === "string" && nuevo.trim() && nuevo !== actual) {
-user.name = nuevo
-}} catch {}
-const chat = global.db.data.chats[m.chat]
-const settings = global.db.data.settings[this.user.jid]  
-const isROwner = [...global.owner.map(([number]) => number)].map(v => v.replace(/[^0-9]/g, "") + "@s.whatsapp.net").includes(m.sender)
-const isOwner = isROwner || m.fromMe
-
-if (chat?.rootowner && !isROwner) {
-    return
-}
-
-const isPrems = isROwner || global.prems.map(v => v.replace(/[^0-9]/g, "") + "@s.whatsapp.net").includes(m.sender) || user.premium == true
-const isOwners = [this.user.jid, ...global.owner.map((number) => number + "@s.whatsapp.net")].includes(m.sender)
-if (opts["queque"] && m.text && !(isPrems)) {
-const queque = this.msgqueque, time = 1000 * 5
-const previousID = queque[queque.length - 1]
-queque.push(m.id || m.key.id)
-setInterval(async function () {
-if (queque.indexOf(previousID) === -1) clearInterval(this)
-await delay(time)
-}, time)
-}
-
-if (m.isBaileys) return
-m.exp += Math.ceil(Math.random() * 10)
-
-if (m.message && m.key && m.key.participant && m.key.participant === this.user.jid) return
-if (m.message && m.key && m.key.remoteJid && m.key.remoteJid === this.user.jid) return
-
-// --- LÓGICA DEL COMANDO 'CODE' AÑADIDA AQUÍ ---
-const conn = this
-const prefixMatch = detectPrefix(m.text || '', globalPrefixes)
-let usedPrefix = prefixMatch ? prefixMatch.prefix : ''
-const noPrefix = (m.text || '').replace(usedPrefix, "")
-let [command, ...args] = noPrefix.trim().split(" ").filter(v => v)
-command = (command || "").toLowerCase()
-
-if (command === 'code') {
-  let userName = args[0] ? args[0] : m.sender.split("@")[0]
-
-  if (!global.subbots) global.subbots = [] 
-
-  const existing = global.subbots.find(c => c.id === userName && c.connection === 'open')
-  if (existing) {
-    await conn.sendMessage(m.chat, { react: { text: '🤖', key: m.key } })
-    return conn.reply(m.chat, '*𝘠𝘢 𝘌𝘳𝘦𝘴 𝘚𝘶𝘣-𝘣𝘰𝘵 𝘋𝘦 𝘐𝘵𝘴𝘶𝘬𝘪 🟢*', m)
+const PLUGIN_DIR = path.join(__dirname, 'plugins')
+let __syntaxErrorFn = null
+try { const mod = await import('syntax-error'); __syntaxErrorFn = mod.default || mod } catch {}
+global.reload = async (_ev, filename) => {
+  try {
+    if (!filename || !filename.endsWith('.js')) return
+    const filePath = path.join(PLUGIN_DIR, filename)
+    if (!fs.existsSync(filePath)) {
+      console.log(chalk.yellow(`⚠️ El plugin '${filename}' fue eliminado`))
+      delete global.plugins[filename]
+      return
+    }
+    if (__syntaxErrorFn) {
+      try {
+        const src = await fs.promises.readFile(filePath)
+        const err = __syntaxErrorFn(src, filename, { sourceType: 'module', allowAwaitOutsideFunction: true })
+        if (err) {
+          console.log([
+            `❌ Error en plugin: '${filename}'`,
+            `🧠 Mensaje: ${err.message}`,
+            `📍 Línea: ${err.line}, Columna: ${err.column}`,
+            `🔎 ${err.annotated}`
+          ].join('\n'))
+          return
+        }
+      } catch {}
+    }
+    // ⚠️ Corregido: Si el archivo es el conector, no lo recarga como plugin
+    if (filename !== 'paring-whatsapp.js') {
+        await importAndIndexPlugin(filePath)
+    }
+    console.log(chalk.green(`🍃 Recargado plugin '${filename}'`))
+  } catch (e) {
+    console.error('[ReloadPlugin]', e.message || e)
   }
-
-  // Se llama a startSubBot correctamente
-  await startSubBot(userName, conn, m) 
-  return 
 }
-// ------------------------------------------------------------------
-
 try {
-    if (m.message && m.key.remoteJid.endsWith('@g.us')) {
-        const text = m.text || ''
-        const sender = m.sender
-        const userNumber = sender.split('@')[0]
+  fs.watch(PLUGIN_DIR, { recursive: false }, (ev, fname) => {
+    if (!fname) return
+    global.reload(ev, fname).catch(() => {})
+  })
+} catch {}
 
-        const userCountry = detectCountryByNumber(userNumber)
-        const countryName = getCountryName(userCountry)
-
-        if (chat.antiArabe) {
-            const paisesArabes = [
-                '+966', '966', 
-                '+971', '971', 
-                '+974', '974', 
-                '+965', '965', 
-                '+973', '973', 
-                '+968', '968', 
-                '+20', '20',   
-                '+962', '962', 
-                '+963', '963', 
-                '+964', '964', 
-                '+967', '967', 
-                '+970', '970', 
-                '+961', '961', 
-                '+218', '218', 
-                '+212', '212', 
-                '+216', '216', 
-                '+213', '213', 
-                '+222', '222', 
-                '+253', '253', 
-                '+252', '252', 
-                '+249', '249'  
-            ]
-
-            const esArabe = paisesArabes.some(code => userNumber.startsWith(code.replace('+', '')))
-
-            if (esArabe) {
-                const isUserAdm = await isUserAdmin(this, m.chat, sender)
-                if (!isUserAdm) {
-                    await this.groupParticipantsUpdate(m.chat, [sender], 'remove')
-
-                    await this.sendMessage(m.chat, { 
-                        text: `╭─「 🚫 *ANTI-ARABE ACTIVADO* 🚫 」
-│ 
-│ *ⓘ Usuario árabe detectado y expulsado*
-│ 
-│ 📋 *Información:*
-│ ├ Usuario: *Arabe*
-│ ├ País: Número árabe detectado
-│ ├ Razón: Anti-Arabe activado
-│ ├ Acción: Expulsado del grupo
-│ └ Mensaje: Eliminado
-│ 
-│ 🌍 *Países bloqueados:*
-│ ├ Arabia Saudita, Emiratos, Qatar
-│ ├ Kuwait, Bahréin, Omán, Egipto
-│ ├ Jordania, Siria, Irak, Yemen
-│ ├ Palestina, Líbano y +10 más
-│ 
-│ 💡 *Para desactivar:*
-│ └ Use el comando .antiarabe off
-╰─◉`.trim(),
-                        mentions: [sender]
-                    })
-                    return
-                }
-            }
-        }
-
-        if (chat.antiExtranjero || (chat.paisesBloqueados && chat.paisesBloqueados.length > 0)) {
-            const paisBloqueado = chat.paisesBloqueados.includes(userCountry)
-
-            if (chat.antiExtranjero && userCountry !== 'local') {
-                const isUserAdm = await isUserAdmin(this, m.chat, sender)
-                if (!isUserAdm) {
-                    await this.groupParticipantsUpdate(m.chat, [sender], 'remove')
-
-                    await this.sendMessage(m.chat, {
-                        text: `╭─「 🚫 *ANTI-EXTRANJERO ACTIVADO* 🚫 」
-│ 
-│ *ⓘ Usuario extranjero detectado y expulsado*
-│ 
-│ 📋 *Información:*
-│ ├ Usuario: Extranjero
-│ ├ País: ${countryName}
-│ ├ Razón: Anti-Extranjero activado
-│ ├ Acción: Expulsado del grupo
-│ 
-│ 🌍 *Configuración actual:*
-│ ├ Solo usuarios locales permitidos
-│ ├ Países bloqueados: Todos excepto local
-│ 
-│ 💡 *Para desactivar:*
-│ └ Use el comando .antiextranjero off
-╰─◉`.trim(),
-                        mentions: [sender]
-                    })
-                    return
-                }
-            }
-
-            if (paisBloqueado) {
-                const isUserAdm = await isUserAdmin(this, m.chat, sender)
-                if (!isUserAdm) {
-                    await this.groupParticipantsUpdate(m.chat, [sender], 'remove')
-
-                    await this.sendMessage(m.chat, {
-                        text: `╭─「 🚫 *PAÍS BLOQUEADO* 🚫 」
-│ 
-│ *ⓘ Usuario de país bloqueado detectado*
-│ 
-│ 📋 *Información:*
-│ ├ Usuario: ${userCountry}
-│ ├ País: ${countryName}
-│ ├ Razón: País en lista de bloqueados
-│ ├ Acción: Expulsado del grupo
-│ 
-│ 📋 *Lista de países bloqueados:*
-│ ${chat.paisesBloqueados.map(p => `├ ${getCountryName(p)}`).join('\n')}
-│ 
-│ 💡 *Para modificar:*
-│ └ Use .bloquepais add/remove/list
-╰─◉`.trim(),
-                        mentions: [sender]
-                    })
-                    return
-                }
-            }
-        }
+async function isValidPhoneNumber(number) {
+  try {
+    let n = number.replace(/\s+/g, '')
+    if (n.startsWith('+521')) {
+      n = n.replace('+521', '+52')
+    } else if (n.startsWith('+52') && n[4] === '1') {
+      n = n.replace('+52 1', '+52')
+      n = n.replace('+521', '+52')
     }
-} catch (error) {
-    console.error('Error en sistema anti-arabe/anti-extranjero:', error)
-}
-
-let usedPrefix2
-const groupMetadata = m.isGroup ? { ...(this.chats?.[m.chat]?.metadata || await this.groupMetadata(m.chat).catch(_ => null) || {}), ...(((this.chats?.[m.chat]?.metadata || await this.groupMetadata(m.chat).catch(_ => null) || {}).participants) && { participants: ((this.chats?.[m.chat]?.metadata || await this.groupMetadata(m.chat).catch(_ => null) || {}).participants || []).map(p => ({ ...p, id: p.jid, jid: p.jid, lid: p.lid })) }) } : {}
-const participants = ((m.isGroup ? groupMetadata.participants : []) || []).map(participant => ({ id: participant.jid, jid: participant.jid, lid: participant.lid, admin: participant.admin }))
-const userGroup = (m.isGroup ? participants.find((u) => this.decodeJid(u.jid) === m.sender) : {}) || {}
-const botGroup = (m.isGroup ? participants.find((u) => this.decodeJid(u.jid) == this.user.jid) : {}) || {}
-const isRAdmin = userGroup?.admin == "superadmin" || false
-const isAdmin = isRAdmin || userGroup?.admin == "admin" || false
-
-if (chat?.adminmode && !isAdmin && !isROwner) {
-    return
-}
-
-const isBotAdmin = botGroup?.admin || false
-
-const ___dirname = path.join(path.dirname(fileURLToPath(import.meta.url)), "./plugins")
-for (const name in global.plugins) {
-const plugin = global.plugins[name]
-if (!plugin) continue
-if (plugin.disabled) continue
-const __filename = join(___dirname, name)
-if (typeof plugin.all === "function") {
-try {
-await plugin.all.call(this, m, {
-chatUpdate,
-__dirname: ___dirname,
-__filename,
-user,
-chat,
-settings
-})
-} catch (err) {
-console.error(err)
-}}
-if (!opts["restrict"])
-if (plugin.tags && plugin.tags.includes("admin")) {
-continue
-}
-
-const chatPrefixes = chat?.prefixes || []
-const chatPrefix = chat?.prefix || null
-
-let allPrefixes = []
-if (chatPrefixes.length > 0) {
-    allPrefixes = [...chatPrefixes]
-}
-
-if (chatPrefix) {
-    allPrefixes = [chatPrefix, ...allPrefixes]
-}
-
-allPrefixes = [...allPrefixes, ...globalPrefixes]
-
-allPrefixes = [...new Set(allPrefixes)]
-
-const prefixMatch2 = detectPrefix(m.text || '', allPrefixes)
-
-let match
-if (prefixMatch2) {
-    match = [prefixMatch2.prefix]
-} else {
-    const strRegex = (str) => String(str || '').replace(/[|\\{}()[\]^$+*?.]/g, "\\$&")
-    const pluginPrefix = plugin.customPrefix || this.prefix || global.prefix
-    match = (pluginPrefix instanceof RegExp ?
-    [[pluginPrefix.exec(m.text || ''), pluginPrefix]] :
-    Array.isArray(pluginPrefix) ?
-    pluginPrefix.map(prefix => {
-    const regex = prefix instanceof RegExp ?
-    prefix : new RegExp(strRegex(prefix))
-    return [regex.exec(m.text || ''), regex]
-    }) : typeof pluginPrefix === "string" ?
-    [[new RegExp(strRegex(pluginPrefix)).exec(m.text || ''), new RegExp(strRegex(pluginPrefix))]] :
-    [[[], new RegExp]]).find(prefix => prefix[1])
-}
-
-if (typeof plugin.before === "function") {
-if (await plugin.before.call(this, m, {
-match,
-prefixMatch: prefixMatch2,
-conn: this,
-participants,
-groupMetadata,
-userGroup,
-botGroup,
-isROwner,
-isOwner,
-isRAdmin,
-isAdmin,
-isBotAdmin,
-isPrems,
-chatUpdate,
-__dirname: ___dirname,
-__filename,
-user,
-chat,
-settings
-}))
-continue
-}
-if (typeof plugin !== "function") {
-continue
-}
-
-let usedPrefixTemp = ''
-if (prefixMatch2 && prefixMatch2.prefix) {
-    usedPrefixTemp = prefixMatch2.prefix
-} else if (match && match[0] && match[0][0]) {
-    usedPrefixTemp = match[0][0]
-}
-
-if (usedPrefixTemp) {
-usedPrefix2 = usedPrefixTemp
-const noPrefix2 = (m.text || '').replace(usedPrefix2, "")
-let [command2, ...args2] = noPrefix2.trim().split(" ").filter(v => v)
-args2 = args2 || []
-let _args2 = noPrefix2.trim().split(" ").slice(1)
-let text2 = _args2.join(" ")
-command2 = (command2 || "").toLowerCase()
-const fail = plugin.fail || global.dfail
-const isAccept = plugin.command instanceof RegExp ?
-plugin.command.test(command2) :
-Array.isArray(plugin.command) ?
-plugin.command.some(cmd => cmd instanceof RegExp ?
-cmd.test(command2) : cmd === command2) :
-typeof plugin.command === "string" ?
-plugin.command === command2 : false
-global.comando = command2
-
-if (!isOwners && settings.self) return
-if ((m.id.startsWith("NJX-") || (m.id.startsWith("BAE5") && m.id.length === 16) || (m.id.startsWith("B24E") && m.id.length === 20))) return
-
-if (!isAccept) continue
-m.plugin = name
-global.db.data.users[m.sender].commands++
-if (chat) {
-const botId = this.user.jid
-if (name !== "group-banchat.js" && chat?.isBanned && !isROwner) {
-const aviso = `El bot ${global.botname || 'Bot'} está desactivado en este grupo\n\n Un administrador puede activarlo con el comando:\n ${usedPrefix2}bot on`.trim()
-await m.reply(aviso)
-return
-}
-if (m.text && user.banned && !isROwner) {
-const mensaje = `Estas baneado/a, no puedes usar comandos en este bot\n\n Razón ${user.bannedReason}\n\n Si este Bot es cuenta oficial y tienes evidencia que respalde que este mensaje es un error, puedes exponer tu caso con un moderador`.trim()
-m.reply(mensaje)
-return
-}}
-if (!isOwners && !m.chat.endsWith('g.us') && !/code|p|ping|qr|estado|status|infobot|botinfo|report|reportar|invite|join|logout|suggest|help|menu/gim.test(m.text)) return
-
-const adminMode = chat.modoadmin || false
-const wa = plugin.botAdmin || plugin.admin || plugin.group || plugin || noPrefix2 || usedPrefix2 || m.text.slice(0, 1) === usedPrefix2 || plugin.command
-
-if (adminMode && !isOwner && m.isGroup && !isAdmin && wa) return
-
-if (plugin.rowner && plugin.owner && !(isROwner || isOwner)) {
-fail("owner", m, this)
-continue
-}
-if (plugin.rowner && !isROwner) {
-fail("rowner", m, this)
-continue
-}
-if (plugin.owner && !isOwner) {
-fail("owner", m, this)
-continue
-}
-if (plugin.premium && !isPrems) {
-fail("premium", m, this)
-continue
-}
-if (plugin.group && !m.isGroup) {
-fail("group", m, this)
-continue
-} 
-if (plugin.botAdmin && !isBotAdmin) {
-fail("botAdmin", m, this)
-continue
-} 
-if (plugin.admin && !isAdmin) {
-fail("admin", m, this)
-continue
-}
-m.isCommand = true
-m.exp += plugin.exp ? parseInt(plugin.exp) : 10
-let extra = {
-match,
-prefixMatch: prefixMatch2,
-usedPrefix: usedPrefix2,
-noPrefix: noPrefix2,
-_args: _args2,
-args: args2,
-command: command2,
-text: text2,
-conn: this,
-participants,
-groupMetadata,
-userGroup,
-botGroup,
-isROwner,
-isOwner,
-isRAdmin,
-isAdmin,
-isBotAdmin,
-isPrems,
-chatUpdate,
-__dirname: ___dirname,
-__filename,
-user,
-chat,
-settings
-}
-try {
-await plugin.call(this, m, extra)
-} catch (err) {
-m.error = err
-console.error(err)
-} finally {
-if (typeof plugin.after === "function") {
-try {
-await plugin.after.call(this, m, extra)
-} catch (err) {
-console.error(err)
-}}}}}} catch (err) {
-console.error(err)
-} finally {
-if (opts["queque"] && m.text) {
-const quequeIndex = this.msgqueque.indexOf(m.id || m.key.id)
-if (quequeIndex !== -1)
-this.msgqueque.splice(quequeIndex, 1)
-}
-let user = global.db.data.users[m.sender]
-if (m) {
-if (m.sender && user) {
-user.exp += m.exp
-}}
-try {
-if (!opts["noprint"]) await (await import("./lib/print.js")).default(m, this)
-} catch (err) {
-console.warn(err)
-console.log(m.message)
-}}}
-
-global.dfail = (type, m, conn) => {
-
-let edadaleatoria = ['10', '28', '20', '40', '18', '21', '15', '11', '9', '17', '25'].getRandom()
-let user2 = m.pushName || 'Anónimo'
-let verifyaleatorio = ['registrar', 'reg', 'verificar', 'verify', 'register'].getRandom()
-
-const msg = {
-    retirado: 'Este comando solo lo pueden usar los owners retirados del bot',
-    rowner: '*\˙˚ʚ₍ ᐢ.👑.ᐢ ₎ɞ˚ ᥱs𝗍ᥱ ᥴ᥆mᥲᥒძ᥆ s᥆ᥣ᥆ ⍴ᥙᥱძᥱ ᥙ𝗍іᥣіzᥲr ⍴᥆r ᥱᥣ ⍴r᥆⍴іᥱ𝗍ᥲrі᥆ ძᥱᥣ ᑲ᥆𝗍.\*',
-    owner: '*\˙˚ʚ₍ ᐢ.👤.ᐢ ₎ɞ˚ ᥱs𝗍ᥱ ᥴ᥆mᥲᥒძ᥆ s᥆ᥣ᥆ sᥱ ⍴ᥙᥱძᥱ ᥙsᥲr ⍴᥆r ᥱᥣ ⍴r᥆⍴іᥱ𝗍ᥲrі᥆ ძᥱᥣ ᑲ᥆𝗍.\*',
-    mods: '*\˙˚ʚ₍ ᐢ.🍃.ᐢ ₎ɞ˚ ᥱs𝗍ᥱ ᥴ᥆mᥲᥒძ᥆ s᥆ᥣ᥆ sᥱ ⍴ᥙᥱძᥱ ᥙsᥲr ⍴᥆r ᥱᥣ ⍴r᥆⍴іᥱ𝗍ᥲrі᥆ ძᥱᥣ ᑲ᥆𝗍.\*',
-    premium: '*\˙˚ʚ₍ ᐢ.💎.ᐢ ₎ɞ˚ ᥱs𝗍ᥱ ᥴ᥆mᥲᥒძ᥆ s᥆ᥣ᥆ sᥱ ⍴ᥙᥱძᥱ ᥙ𝗍іᥣіzᥲr ⍴᥆r ᥙsᥙᥲrі᥆s ⍴rᥱmіᥙm, ᥡ ⍴ᥲrᥲ mі ᥴrᥱᥲძ᥆r.\*',
-    group: '*\˙˚ʚ₍ ᐢ.📚.ᐢ ₎ɞ˚ ᥱs𝗍ᥱ ᥴ᥆mᥲᥒძ᥆ s᥆ᥣ᥆ sᥱ ⍴ᥙᥱძᥱ ᥙsᥲr ᥱᥒ grᥙ⍴᥆s.\`*',
-    private: '*\˙˚ʚ₍ ᐢ.📲.ᐢ ₎ɞ˚ ᥱs𝗍ᥱ ᥴ᥆mᥲᥒძ᥆ s᥆ᥣ᥆ sᥱ ⍴ᥙᥱძᥱ ᥙsᥲr ᥲᥣ ᥴһᥲ𝗍 ⍴rі᥎ᥲძ᥆ ძᥱᥣ ᑲ᥆𝗍.\*',
-    admin: '*\˙˚ʚ₍ ᐢ.🔱.ᐢ ₎ɞ˚ ᥱs𝗍ᥱ ᥴ᥆mᥲᥒძ᥆ s᥆ᥣ᥆ sᥱs ⍴ᥲrᥲ ᥲძmіᥒs ძᥱᥣ grᥙ⍴᥆.\`*',
-    botAdmin: '*\˙˚ʚ₍ ᐢ.🌟.ᐢ ₎ɞ˚ ⍴ᥲrᥲ ⍴᥆ძᥱr ᥙsᥲr ᥱs𝗍ᥱ ᥴ᥆mᥲᥒძ᥆ ᥱs ᥒᥱᥴᥱsᥲrіᥲr 𝗊ᥙᥱ ᥡ᥆ sᥱᥲ ᥲძmіᥒ.\*',
-    unreg: '*\˙˚ʚ₍ ᐢ.📋.ᐢ ₎ɞ˚ ᥒᥱᥴᥱsі𝗍ᥲs ᥱs𝗍ᥲr rᥱgіs𝗍rᥲძ᥆(ᥲ) ⍴ᥲrᥲ ᥙsᥲr ᥱs𝗍ᥱ ᥴ᥆mᥲᥒძ᥆, ᥱsᥴrіᑲᥲr #rᥱg ⍴ᥲrᥲ rᥱgіs𝗍rᥲr𝗍ᥱ.\*',
-    restrict: '*\˙˚ʚ₍ ᐢ.⚙️.ᐢ ₎ɞ˚ ᥴ᥆mᥲᥒძ᥆ rᥱs𝗍rіᥒgіძ᥆ ⍴ᥲr ძᥱᥴіsіᥲr ძᥱᥣ ⍴r᥆⍴іᥲ𝗍ᥲrі᥆ ძᥱᥣ ᑲ᥆𝗍.\*'
-  }[type];
-if (msg) return conn.reply(m.chat, msg, m, global.rcanal).then(_ => m.react('✖️'))
-}
-
-let file = fileURLToPath(import.meta.url)
-watchFile(file, async () => {
-unwatchFile(file)
-console.log(chalk.magenta("Se actualizo 'handler.js'"))
-if (global.reloadHandler) console.log(await global.reloadHandler())
-})
-
-global.detectPrefix = detectPrefix
-global.globalPrefixes = globalPrefixes
-
-export default { 
-    handler
+    const parsed = phoneUtil.parseAndKeepRawInput(n)
+    return phoneUtil.isValidNumber(parsed)
+  } catch (error) {
+    return false
+  }
 }
