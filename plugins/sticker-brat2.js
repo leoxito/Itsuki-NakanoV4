@@ -1,5 +1,6 @@
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
+const axios = require('axios');
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
     //Fixieada por ZzawX
@@ -17,39 +18,127 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
             );
         }
 
-        // Primero verifiquemos qué devuelve la API
-        let apiUrl = `https://apizell.web.id/tools/bratanimate?q=${encodeURIComponent(text)}`;
-        console.log('🔍 URL de API:', apiUrl);
-
-        // Usar fetch nativo
-        let response = await fetch(apiUrl);
-        
-        // Verificar tipo de contenido
-        const contentType = response.headers.get('content-type');
-        console.log('📄 Content-Type:', contentType);
-        
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const buffer = await response.arrayBuffer();
-        console.log('📦 Tamaño del buffer:', buffer.byteLength, 'bytes');
-        
-        if (buffer.byteLength < 100) {
-            throw new Error('Respuesta demasiado pequeña');
-        }
-
-        // Verificar si es imagen/video válido
-        const arr = new Uint8Array(buffer.slice(0, 12));
-        console.log('🔬 Bytes iniciales:', Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join(' '));
-        
-        await m.react('✅️');
-
         const username = m.pushName || m.sender.split('@')[0] || "Usuario";
         
-        // Enviar como sticker directamente
+        // API principal para sticker animado
+        const primaryApiUrl = `https://apizell.web.id/tools/bratanimate?q=${encodeURIComponent(text)}`;
+        
+        // API secundaria como fallback
+        const fallbackApiUrl = `https://api.siputzx.my.id/api/m/bratvideo?text=${encodeURIComponent(text)}`;
+
+        let stickerBuffer;
+        let apiUsed = "ZellAPI";
+
+        try {
+            console.log('🔍 Probando API principal como JSON primero...');
+            
+            // INTENTO 1: Probar como JSON
+            try {
+                const jsonResponse = await axios({
+                    method: 'GET',
+                    url: primaryApiUrl,
+                    timeout: 10000,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/json, */*'
+                    }
+                });
+
+                console.log('📄 Respuesta JSON recibida:', typeof jsonResponse.data);
+                
+                if (jsonResponse.data && typeof jsonResponse.data === 'object') {
+                    console.log('📊 Estructura JSON:', Object.keys(jsonResponse.data));
+                    
+                    // Extraer URL de imagen del JSON (como en brat original)
+                    let imageUrl;
+                    
+                    if (jsonResponse.data.url) {
+                        imageUrl = jsonResponse.data.url;
+                    } else if (jsonResponse.data.result && jsonResponse.data.result.url) {
+                        imageUrl = jsonResponse.data.result.url;
+                    } else if (jsonResponse.data.result && typeof jsonResponse.data.result === 'string') {
+                        imageUrl = jsonResponse.data.result;
+                    }
+                    
+                    if (imageUrl) {
+                        console.log('🖼️ URL encontrada en JSON:', imageUrl);
+                        
+                        const imageResponse = await axios({
+                            method: 'GET',
+                            url: imageUrl,
+                            responseType: 'arraybuffer',
+                            timeout: 10000,
+                            headers: {
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                            }
+                        });
+                        
+                        stickerBuffer = Buffer.from(imageResponse.data);
+                        console.log('✅ Imagen descargada desde URL JSON:', stickerBuffer.length, 'bytes');
+                    } else {
+                        throw new Error('No se encontró URL en JSON');
+                    }
+                } else {
+                    throw new Error('No es JSON válido');
+                }
+                
+            } catch (jsonError) {
+                console.log('❌ No es JSON, probando como imagen directa...');
+                
+                // INTENTO 2: Probar como imagen/video directo
+                const directResponse = await axios({
+                    method: 'GET',
+                    url: primaryApiUrl,
+                    responseType: 'arraybuffer',
+                    timeout: 10000,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'image/*,video/*,*/*'
+                    }
+                });
+                
+                stickerBuffer = Buffer.from(directResponse.data);
+                console.log('✅ Imagen descargada directamente:', stickerBuffer.length, 'bytes');
+            }
+
+            // Verificar que sea válido
+            if (!stickerBuffer || stickerBuffer.length < 100) {
+                throw new Error('Archivo inválido');
+            }
+
+        } catch (primaryError) {
+            console.log('❌ API principal falló:', primaryError.message);
+            console.log('🔄 Intentando con API secundaria...');
+            
+            try {
+                // Probar API secundaria
+                const fallbackResponse = await axios({
+                    method: 'GET',
+                    url: fallbackApiUrl,
+                    responseType: 'arraybuffer',
+                    timeout: 10000,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'image/*,video/*,*/*'
+                    }
+                });
+                
+                stickerBuffer = Buffer.from(fallbackResponse.data);
+                apiUsed = "API Secundaria";
+                console.log('✅ Usando API secundaria:', stickerBuffer.length, 'bytes');
+
+            } catch (fallbackError) {
+                throw new Error(`Ambas APIs fallaron`);
+            }
+        }
+
+        await m.react('✅️');
+
+        console.log(`🎨 Enviando sticker animado (Fuente: ${apiUsed})`);
+        
+        // Enviar sticker con metadata
         await conn.sendMessage(m.chat, {
-            sticker: Buffer.from(buffer),
+            sticker: stickerBuffer,
             contextInfo: {
                 mentionedJid: [m.sender],
                 externalAdReply: {
@@ -70,12 +159,16 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         
         let errorMessage = '> `❌ ERROR ENCONTRADO`\n\n';
         
-        if (error.message.includes('HTTP')) {
-            errorMessage += `> \`📝 Error en la API: ${error.message}\``;
-        } else if (error.message.includes('demasiado pequeña')) {
-            errorMessage += '> `📝 El servicio devolvió un archivo vacío o corrupto.`';
+        if (error.message.includes('Ambas APIs fallaron')) {
+            errorMessage += '> `📝 Todos los servicios están temporalmente no disponibles. Intenta más tarde.`';
+        } else if (error.code === 'ECONNABORTED') {
+            errorMessage += '> `⏰ Tiempo de espera agotado. Intenta de nuevo.`';
+        } else if (error.response) {
+            errorMessage += '> `📝 Error en la API: ' + error.response.status + '`';
+        } else if (error.request) {
+            errorMessage += '> `📝 No se pudo conectar con el servicio.`';
         } else {
-            errorMessage += `> \`📝 ${error.message}\``;
+            errorMessage += '> `📝 ' + error.message + '`';
         }
 
         await conn.reply(m.chat, errorMessage, m);
