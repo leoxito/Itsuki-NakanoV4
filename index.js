@@ -10,7 +10,6 @@ import cfonts from 'cfonts'
 import pino from 'pino'
 import { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, jidNormalizedUser } from '@whiskeysockets/baileys'
 import { makeWASocket, protoType, serialize } from './lib/simple.js'
-import { startSubBot } from './lib/subs.js';
 import config from './config.js'
 import { loadDatabase, saveDatabase, DB_PATH } from './lib/db.js'
 import { watchFile } from 'fs'
@@ -20,6 +19,7 @@ const phoneUtil = (libPhoneNumber.PhoneNumberUtil || libPhoneNumber.default?.Pho
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+// DEFINIR _filename aquí para evitar el error
 global._filename = __filename
 
 global.prefixes = Array.isArray(config.prefix) ? [...config.prefix] : []
@@ -29,9 +29,6 @@ global.opts = global.opts && typeof global.opts === 'object' ? global.opts : {}
 if (!fs.existsSync("./tmp")) {
   fs.mkdirSync("./tmp");
 }
-
-if (!global.conns) global.conns = []
-const reconnecting = new Set()
 
 const CONFIG_PATH = path.join(__dirname, 'config.js')
 watchFile(CONFIG_PATH, async () => {
@@ -57,8 +54,6 @@ watchFile(CONFIG_PATH, async () => {
 
 global.plugins = {}
 global.commandIndex = {}
-
-// Definir loadPlugins ANTES de usarlo
 async function loadPlugins() {
   global.plugins = {}
   global.commandIndex = {}
@@ -108,113 +103,11 @@ async function importAndIndexPlugin(fullPath) {
   } catch (e) {
     try {
       const fname = path.basename(fullPath)
-      const errBox = `\n╭─────────────────────────────◉\n│ ${chalk.white.bgRed.bold('        ❌ PLUGIN LOAD ERROR        ')}\n│ 「 🧩 」${chalk.yellow('Plugin: ')}${chalk.white(fname)}\n│「 ⚠️ 」${chalk.yellow('Error:  ')}${chalk.white(e.message || e)}\n╰─────────────────────────────◉\n`
+      const errBox = `\n╭─────────────────────────────◉\n│ ${chalk.white.bgRed.bold('        ❌ PLUGIN LOAD ERROR        ')}\n│ 「 🧩 」${chalk.yellow('Plugin: ')}${chalk.white(fname)}\n│ 「 ⚠️ 」${chalk.yellow('Error:  ')}${chalk.white(e.message || e)}\n╰─────────────────────────────◉\n`
       console.error(errBox)
     } catch {
       console.error('[PluginLoadError]', path.basename(fullPath), e.message)
     }
-  }
-}
-
-async function loadSubBots() {
-  const SUB_BOT_FOLDER = './Sessions/Subs'
-
-  if (!fs.existsSync(SUB_BOT_FOLDER)) return
-
-  const botIds = fs.readdirSync(SUB_BOT_FOLDER)
-  for (const userId of botIds) {
-    const sessionPath = path.join(SUB_BOT_FOLDER, userId)
-    const credsPath = path.join(sessionPath, 'creds.json')
-    if (!fs.existsSync(credsPath)) continue
-    if (global.conns.some((conn) => conn.userId === userId)) continue
-    if (reconnecting.has(userId)) continue
-    try {
-      reconnecting.add(userId)
-      console.log(chalk.gray(`[ 🤖 ]  Cargando sub-bot: ${userId}`))
-      await startSubBotSession(userId, sessionPath)
-    } catch (e) {
-      console.log(chalk.gray(`[ 🤖 ]  Falló carga de ${userId}: ${e.message}`))
-      reconnecting.delete(userId)
-    }
-    await new Promise((res) => setTimeout(res, 2500))
-  }
-  setTimeout(loadSubBots, 60 * 1000)
-}
-
-async function startSubBotSession(userId, sessionPath) {
-  try {
-    const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
-    const { version } = await fetchLatestBaileysVersion()
-
-    const sock = makeWASocket({
-      version,
-      logger: pino({ level: 'silent' }),
-      auth: state,
-      markOnlineOnConnect: true,
-      syncFullHistory: false,
-      browser: Browsers.macOS('Chrome')
-    })
-
-    sock.userId = userId
-    sock.isSubBot = true
-
-    sock.ev.on('creds.update', saveCreds)
-
-    sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect } = update
-
-      if (connection === 'open') {
-        console.log(chalk.green(`[ 🤖 ]  Sub-bot conectado: ${userId}`))
-        sock.uptime = Date.now()
-        if (!global.conns.some(c => c.userId === userId)) {
-          global.conns.push(sock)
-        }
-        reconnecting.delete(userId)
-      }
-
-      if (connection === 'close') {
-        const reason = lastDisconnect?.error?.output?.statusCode || 0
-        console.log(chalk.yellow(`[ 🤖 ]  Sub-bot desconectado: ${userId} (código: ${reason})`))
-
-        const index = global.conns.findIndex(c => c.userId === userId)
-        if (index !== -1) global.conns.splice(index, 1)
-
-        if (!reconnecting.has(userId)) {
-          reconnecting.add(userId)
-          setTimeout(() => {
-            if (reconnecting.has(userId)) {
-              reconnecting.delete(userId)
-              startSubBotSession(userId, sessionPath).catch(() => {})
-            }
-          }, 5000)
-        }
-      }
-    })
-
-    sock.ev.on('messages.upsert', async (chatUpdate) => {
-      try {
-        const msgs = Array.isArray(chatUpdate?.messages) ? chatUpdate.messages : []
-        if (!msgs.length) return
-        const since = sock.__sessionOpenAt || Date.now()
-        const graceMs = 5000
-        const fresh = msgs.filter((m) => {
-          try {
-            const tsSec = Number(m?.messageTimestamp || 0)
-            const tsMs = isNaN(tsSec) ? 0 : (tsSec > 1e12 ? tsSec : tsSec * 1000)
-            if (!tsMs) return true
-            return tsMs >= (since - graceMs)
-          } catch { return true }
-        })
-        if (!fresh.length) return
-        const filteredUpdate = { ...chatUpdate, messages: fresh }
-        await global.handler?.call(sock, filteredUpdate)
-      } catch (e) {
-        console.error(`[SubBotHandler] ${userId}:`, e.message)
-      }
-    })
-
-  } catch (error) {
-    throw error
   }
 }
 
@@ -223,18 +116,9 @@ try {
   const dbInfo = `\n╭─────────────────────────────◉\n│ ${chalk.red.bgBlueBright.bold('        📦 BASE DE DATOS        ')}\n│ 「 🗃 」${chalk.yellow('Archivo: ')}${chalk.white(DB_PATH)}\n╰─────────────────────────────◉\n`
   console.log(dbInfo)
 } catch {}
-
-// Ahora loadPlugins está definido, podemos usarlo
 await loadPlugins()
-
-(async () => {
-  await loadSubBots()
-})()
-
 let handler
-try { ({ handler } = await import('./handler.js')) 
-  global.handler = handler
-} catch (e) { console.error('[Handler] Error importando handler:', e.message) }
+try { ({ handler } = await import('./handler.js')) } catch (e) { console.error('[Handler] Error importando handler:', e.message) }
 
 try {
   const { say } = cfonts
@@ -268,13 +152,6 @@ async function chooseMethod(authDir) {
   if (process.argv.includes('--code')) return 'code'
   if (process.env.LOGIN_MODE === 'qr') return 'qr'
   if (process.env.LOGIN_MODE === 'code') return 'code'
-  
-  // Si no hay TTY (entorno sin terminal), usar QR por defecto
-  if (!process.stdin.isTTY) {
-    console.log(chalk.yellow('[INFO] Entorno sin TTY, usando método QR por defecto'))
-    return 'qr'
-  }
-  
   let ans
   do {
     console.clear()
@@ -304,6 +181,7 @@ async function startBot() {
 
   sock.__sessionOpenAt = sock.__sessionOpenAt || 0
 
+  // LISTENER DE MENSAJES PRINCIPAL
   sock.ev.on('messages.upsert', async (chatUpdate) => {
     try {
       const since = sock.__sessionOpenAt || PROCESS_START_AT
@@ -541,10 +419,15 @@ async function startBot() {
     }
   })
 
+  // LISTENER DE ACTUALIZACIONES DE GRUPO (SIN BIENVENIDAS)
   sock.ev.on('group-participants.update', async (ev) => {
     try {
       const { id, participants, action } = ev || {}
       if (!id || !participants || !participants.length) return
+
+      // Aquí podrías agregar otras funcionalidades de grupo si lo deseas
+      // Pero se ha eliminado el sistema de bienvenida como solicitaste
+
     } catch (e) { 
       console.error('[GroupParticipantsUpdate]', e) 
     }
