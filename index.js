@@ -149,7 +149,7 @@ const cachedStart = speed.measurePerformance('bot-start', async () => {
   global.getChat = database.getChat;
   global.updateChat = database.updateChat;
 
-  console.log(chalk.magentaBright('\nฅ^•ﻌ•^ฅ ɪᴛsᴜᴋɪ ɴᴀᴋᴀɴᴏ ^ɴᴇᴡ-ᴜᴘᴅᴀᴛᴇ | ᴠ4'));
+  /*console.log(chalk.magentaBright('\nฅ^•ﻌ•^ฅ ɪᴛsᴜᴋɪ ɴᴀᴋᴀɴᴏ ^ɴᴇᴡ-ᴜᴘᴅᴀᴛᴇ | ᴠ4'));
 
   // Mostrar banner con cfonts (o alternativa)
   cfonts.say('Itsuki Nakano', {
@@ -168,7 +168,7 @@ const cachedStart = speed.measurePerformance('bot-start', async () => {
   console.log(chalk.bold.magenta('🌸 Made With | Itsuki Nakano IA Wabot V4'));
   console.log(chalk.bold.magenta('📱 Copyright (C) - ') + chalk.bold.cyan('Made by leoxitoDev.xyz'));
   console.log(chalk.bold.magenta('🎀 Versión: ') + chalk.bold.green('^NewUpdate | V4'));
-  console.log('');
+  console.log('');*/
 
   // Mostrar información del sistema
   const ramInGB = os.totalmem() / (1024 * 1024 * 1024);
