@@ -28,7 +28,7 @@ filesToObfuscate.forEach(file => {
   const backupPath = path.join(__dirname, `${file}.backup`);
 
   if (!fs.existsSync(backupPath)) {
-    console.log(`⚠️  Backup not found for ${file}, skipping`);
+    // console.log(`⚠️  Backup not found for ${file}, skipping`);
     return;
   }
 
@@ -69,10 +69,10 @@ filesToObfuscate.forEach(file => {
     const finalCode = credits + obfuscationResult.getObfuscatedCode();
     fs.writeFileSync(filePath, finalCode, 'utf8');
 
-    console.log(`✅ Successfully obfuscated: ${file}`);
+    // console.log(`✅ Successfully obfuscated: ${file}`);
   } catch (error) {
-    console.error(`❌ Error obfuscating ${file}:`, error.message);
+    // console.error(`❌ Error obfuscating ${file}:`, error.message);
   }
 });
 
-console.log('\n🎉 Obfuscation complete!');
+// console.log('\n🎉 Obfuscation complete!');

@@ -19,6 +19,12 @@ const database = require('./lib/database');
 const { recsubs } = require("./lib/recsubs");
 const sessionPath = path.join(__dirname, 'Sesion');
 
+// Crear directorio de sesión si no existe
+const fs = require('fs');
+if (!fs.existsSync(sessionPath)) {
+  fs.mkdirSync(sessionPath, { recursive: true });
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
