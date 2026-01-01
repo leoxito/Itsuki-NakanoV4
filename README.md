@@ -80,33 +80,6 @@
 </details>
 
 
-### 𝗜𝗻𝘀𝘁𝗮𝗹𝗮𝗰𝗶𝗼𝗻 𝗘𝗻 𝗧𝗲𝗿𝗺𝘂𝘅 💻
-
-<details>
-<summary><strong>💻 𝐓𝐄𝐑𝐌𝐔𝐗</strong></summary>
-
-> *Comandos para instalar de forma manual*
-```bash
-termux-setup-storage
-```
-```bash
-apt update && apt upgrade && pkg install -y git nodejs ffmpeg imagemagick yarn
-```
-```bash
-git clone https://github.com/leoxito/Itsuki-NakanoV4 && cd Itsuki-NakanoV4
-```
-```bash
-npm install
-```
-```bash
-npm start
-```
-
-</details>
-
-
-
-
 ### `𝗣𝗮𝘁𝗿𝗼𝘀𝗶𝗻𝗮𝗱𝗼𝗿𝗲𝘀 𝗗𝗲𝗹 𝗣𝗿𝗼𝘆𝗲𝗰𝘁𝗼 𝗜𝘁𝘀𝘂𝗸𝗶 𝗡𝗮𝗸𝗮𝗻𝗼-𝗜𝗔 🌺`
 
 
