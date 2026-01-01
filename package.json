@@ -8,7 +8,7 @@
     "@mashakujou/manhwaweb-scraper": "^1.1.0",
     "@mashakujou/ytdownload": "^1.0.4",
     "@octokit/rest": "^22.0.0",
-    "@whiskeysockets/baileys": "npm:wileys",
+    "@whiskeysockets/baileys": "npm:@soymaycol/baileys",
     "acrcloud": "^1.4.0",
     "aptoide-scraper": "^1.0.1",
     "archiver": "^7.0.1",
