@@ -131,3 +131,7 @@ href="https://dash.skyultraplus.com"><img src="https://cdn.russellxz.click/39cd2
 ### **`Autor del bot`**
 <a
 href="https://github.com/leoxito"><img src="https://github.com/leoxito.png" width="150" height="150" alt="leoxito"/></a>
+
+### 🌸 **Anuncio Importante:**
+> **Esta será la última versión oficial de Itsuki Nakano Wabot.**  
+Después de múltiples mejoras y actualizaciones, hemos llegado a la versión definitiva que reúne todas las características óptimas.
