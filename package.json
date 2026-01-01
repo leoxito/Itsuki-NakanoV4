@@ -17,6 +17,7 @@
     "axios-cookiejar-support": "^6.0.4",
     "canvas": "^3.1.2",
     "chalk": "^4.1.2",
+    "cfonts": "^3.3.0",
     "cheerio": "^1.1.0",
     "chokidar": "^4.0.3",
     "cloudscraper": "^4.6.0",
